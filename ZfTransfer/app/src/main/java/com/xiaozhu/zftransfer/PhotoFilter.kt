@@ -4,19 +4,41 @@ import io.github.noisetta.nikonpull.ptp.CameraObject
 
 enum class PhotoFilter(val label: String) { ALL("全部"), NOT_IMPORTED("未导入"), IMPORTED("已导入") }
 
+/** File format and import state are independent filter dimensions. HLG is not inferred from a suffix. */
+enum class MediaFormat(val label: String, val available: Boolean = false) {
+    ALL("全部格式",true), JPEG("JPEG",true), RAW("RAW"), VIDEO("视频"), HEIF("HIF / HEIF");
+    fun matches(obj: CameraObject) = this==ALL || this==classify(obj.filename,obj.format)
+    companion object {
+        fun classify(filename: String, ptpFormat: Int = 0): MediaFormat? {
+            val suffix=filename.substringAfterLast('.',"").lowercase(java.util.Locale.ROOT)
+            return when(suffix) {
+                "jpg","jpeg" -> JPEG
+                "nef","nrw","dng" -> RAW
+                "mov","mp4","avi","mpeg","mpg","m4v" -> VIDEO
+                "hif","heif","heic" -> HEIF
+                else -> when(ptpFormat) {
+                    CameraObject.FORMAT_EXIF_JPEG -> JPEG
+                    0x300A,0x300B,0x300C,0x300D -> VIDEO
+                    else -> null
+                }
+            }
+        }
+    }
+}
+
 /** Only verified imports enter the imported filter; no filename or preview-cache guessing. */
 object PhotoCatalog {
-    fun visible(photos: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter): List<CameraObject> =
-        photos.filter { when (filter) {
+    fun visible(photos: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> =
+        photos.filter { format.matches(it) && when (filter) {
             PhotoFilter.ALL -> true
             PhotoFilter.NOT_IMPORTED -> it.handle !in verified
             PhotoFilter.IMPORTED -> it.handle in verified
         } }
 
     /** Freeze existing preview membership until dismiss, append only newly eligible photos. */
-    fun appendPreview(existing: List<CameraObject>, loaded: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter): List<CameraObject> {
+    fun appendPreview(existing: List<CameraObject>, loaded: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> {
         val known = existing.map { it.handle }.toHashSet()
-        return existing + visible(loaded, verified, filter).filter { known.add(it.handle) }
+        return existing + visible(loaded, verified, filter, format).filter { known.add(it.handle) }
     }
 }
 

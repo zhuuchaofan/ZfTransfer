@@ -4,6 +4,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GalleryInteractionTest {
+    @Test fun formatClassificationIsCaseInsensitiveAndDoesNotMislabelHeifAsJpeg() {
+        assertEquals(MediaFormat.JPEG,MediaFormat.classify("a.JpEg"))
+        assertEquals(MediaFormat.RAW,MediaFormat.classify("a.NEF"))
+        assertEquals(MediaFormat.VIDEO,MediaFormat.classify("a.MOV"))
+        assertEquals(MediaFormat.HEIF,MediaFormat.classify("a.HIF",0x3801))
+        assertEquals(MediaFormat.HEIF,MediaFormat.classify("a.HEIC"))
+        assertNull(MediaFormat.classify("a.bin"))
+    }
+    @Test fun importStatusAndFormatAreCombinedWithoutChangingCameraOrder() {
+        val jpeg=queuedPhoto(1); val raw=queuedPhoto(2).copy(filename="b.NEF",format=0)
+        val heif=queuedPhoto(3).copy(filename="c.HIF",format=0)
+        val items=listOf(jpeg,raw,heif)
+        assertEquals(listOf(raw),PhotoCatalog.visible(items,setOf(2L),PhotoFilter.IMPORTED,MediaFormat.RAW))
+        assertEquals(emptyList<Any>(),PhotoCatalog.visible(items,setOf(2L),PhotoFilter.NOT_IMPORTED,MediaFormat.RAW))
+        assertEquals(listOf(heif),PhotoCatalog.visible(items,emptySet(),PhotoFilter.ALL,MediaFormat.HEIF))
+        assertFalse(MediaFormat.RAW.available);assertFalse(MediaFormat.VIDEO.available);assertFalse(MediaFormat.HEIF.available)
+    }
+
     @Test fun cameraTotalDoesNotConfuseUnclassifiedFilesWithJpegs() {
         assertEquals("相机共 500 个文件 · 已读取 36 张 JPEG",CameraCatalogSummary.text(500,40,36))
         assertEquals("相机共 430 张 JPEG",CameraCatalogSummary.text(500,500,430))

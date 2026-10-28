@@ -23,6 +23,7 @@ class PhotoPreviewController(
     private var previewPhotos = emptyList<CameraObject>()
     private val photos get() = previewPhotos
     private var filterAtOpen = PhotoFilter.ALL
+    private var formatAtOpen = MediaFormat.ALL
     private val imported get() = runtime.imported
     private val busy get() = runtime.busy
     private val client get() = runtime.client
@@ -124,8 +125,8 @@ class PhotoPreviewController(
             report("原图已加载。需要保存时，请点击导入。")
         }
     }
-    fun open(position: Int, items: List<CameraObject>, filter: PhotoFilter) {
-        previewPhotos=items.toList();filterAtOpen=filter;show(position)
+    fun open(position: Int, items: List<CameraObject>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL) {
+        previewPhotos=items.toList();filterAtOpen=filter;formatAtOpen=format;show(position)
     }
     private fun show(position: Int) {
         if (position !in photos.indices) return
@@ -185,7 +186,7 @@ class PhotoPreviewController(
     }
     fun refresh() {
         if (preview?.isShowing != true) return
-        previewPhotos=PhotoCatalog.appendPreview(previewPhotos,runtime.photos,imported,filterAtOpen)
+        previewPhotos=PhotoCatalog.appendPreview(previewPhotos,runtime.photos,imported,filterAtOpen,formatAtOpen)
         refreshActions()
         updateOriginalAction()
         previewStrip.submit(photos, index, ::thumbnail, ::show)

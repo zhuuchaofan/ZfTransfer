@@ -20,7 +20,15 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var closed = false
+    private var allPhotos = emptyList<Photo>()
     private var photos = emptyList<Photo>()
+    private var format = MediaFormat.ALL
+    fun setFormat(value: MediaFormat) {
+        format=value
+        photos=allPhotos.filter { value==MediaFormat.ALL || MediaFormat.classify(it.name)==value }
+        stripItems=photos.mapIndexed { i,p -> io.github.noisetta.nikonpull.ptp.CameraObject(i.toLong(),0,0x3801,p.size,0,p.name,"") }
+        adapter.notifyDataSetChanged();changed()
+    }
     private val pending = mutableSetOf<Uri>()
     private val failed = mutableSetOf<Uri>()
     private var stripItems = emptyList<io.github.noisetta.nikonpull.ptp.CameraObject>()
@@ -87,7 +95,8 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
             }.sortedByDescending { it.date }
             main.post {
                 if (closed) return@post
-                photos = local.distinctBy { it.uri.lastPathSegment }; failed.clear()
+                allPhotos = local.distinctBy { it.uri.lastPathSegment }; failed.clear()
+                setFormat(format)
                 stripItems = photos.mapIndexed { i, p -> io.github.noisetta.nikonpull.ptp.CameraObject(i.toLong(), 0, 0x3801, p.size, 0, p.name, "") }
                 adapter.notifyDataSetChanged()
                 loading = false; changed()

@@ -49,6 +49,7 @@ class MainActivity : Activity() {
     private val photos get() = runtime.photos
     private var visiblePhotos = emptyList<CameraObject>()
     private var activeFilter = PhotoFilter.ALL
+    private var activeFormat = MediaFormat.ALL
     private lateinit var screen: GalleryScreen
     private var rangeOutside = emptyMap<Long, CameraObject>()
     private val sheets = mutableSetOf<AppSheet>()
@@ -56,7 +57,7 @@ class MainActivity : Activity() {
         sheets.add(dialog); dialog.setOnDismissListener { sheets.remove(dialog) }
     }
     private fun refreshCatalog() {
-        val next = PhotoCatalog.visible(photos, imported, activeFilter)
+        val next = PhotoCatalog.visible(photos, imported, activeFilter, activeFormat)
         if (next != visiblePhotos) { visiblePhotos = next; range = null }
         screen.renderFilter(activeFilter, if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size, true)
     }
@@ -159,7 +160,7 @@ class MainActivity : Activity() {
             override fun preview(handle: Long) {
                 if(activeFilter==PhotoFilter.IMPORTED) { localGallery.open(handle.toInt()); return }
                 val index=visiblePhotos.indexOfFirst { it.handle==handle }
-                if(!busy.get() && index>=0) previewController.open(index,visiblePhotos,activeFilter)
+                if(!busy.get() && index>=0) previewController.open(index,visiblePhotos,activeFilter,activeFormat)
             }
             override fun toggle(index: Int) { visiblePhotos.getOrNull(index)?.let { toggle(it) } }
             override fun rangeStart(index: Int) {
@@ -170,6 +171,7 @@ class MainActivity : Activity() {
                 applyRange(index)
             }
             override fun rangeMove(index: Int) = applyRange(index)
+            override fun format() = showFormatFilter()
             override fun filter(filter: PhotoFilter) {
                 if(activeFilter==filter) return
                 activeFilter=filter; range=null; grid.endBrowseGesture()
@@ -192,7 +194,7 @@ class MainActivity : Activity() {
         }
         status = screen.status
         grid = screen.grid
-        grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED) runtime.readPage(automatic = true) }
+        grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED && activeFormat.available) runtime.readPage(automatic = true) }
         grid.onBrowseGesture = runtime::beginBrowseGesture
         selectionLabel = screen.selectionLabel
         cameraLabel = screen.cameraLabel
@@ -215,6 +217,21 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = AppUi.dp(this,value)
+    private fun showFormatFilter() {
+        val sheet=newSheet("格式筛选")
+        sheet.message("与上方导入状态组合筛选。目前支持 JPEG；RAW、视频、HIF / HEIF 的浏览和导入后续开放。")
+        MediaFormat.entries.forEach { format ->
+            sheet.row((if(activeFormat==format) "✓  " else "") + format.label + if(format.available) "" else " · 后续支持") {
+                sheet.dismiss()
+                if(activeFormat!=format) {
+                    activeFormat=format;range=null;grid.endBrowseGesture()
+                    localGallery.setFormat(format)
+                    refreshCatalog();updateSelection();setBusy(busy.get());grid.setSelection(0)
+                }
+            }
+        }
+        sheet.action("取消");sheet.show()
+    }
     private fun showSettings() {
         val sheet = newSheet("相机与应用")
         sheet.row("相机 Wi-Fi 配置") { showWifiProfile() }
@@ -374,8 +391,8 @@ class MainActivity : Activity() {
         more.alpha = if (more.isEnabled) 1f else 0.4f
         download.alpha = if (download.isEnabled) 1f else 0.4f
         previewController.refreshActions()
-        grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED
-        grid.canReadMore = activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
+        grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED && activeFormat.available
+        grid.canReadMore = activeFormat.available && activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
         progress.isIndeterminate = value && runtime.taskState.transfer == null
         progress.visibility = if (value) View.VISIBLE else View.GONE
         screen.renderFilter(activeFilter,if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size,true)
@@ -403,10 +420,19 @@ class MainActivity : Activity() {
     private fun updateGalleryControls() {
         if (!::footer.isInitialized) return
         val local=activeFilter==PhotoFilter.IMPORTED
+        screen.formatControl.text="格式：${activeFormat.label} ▾"
         screen.catalogSummary.visibility=if(!local && runtime.connectionReady) View.VISIBLE else View.GONE
         screen.catalogSummary.text=CameraCatalogSummary.text(handles.size,cursor,photos.size)
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
+        if(!activeFormat.available) {
+            footer.visibility=View.GONE;selectAll.visibility=View.GONE;cancelSelection.visibility=View.GONE
+            more.visibility=View.GONE;screen.connectionActions.visibility=View.GONE;screen.emptyReadMore.visibility=View.GONE
+            screen.localAccess.visibility=View.GONE;status.visibility=View.GONE;progress.visibility=View.GONE
+            emptyTitle.text="${activeFormat.label} · 后续支持"
+            emptyHint.text="该格式的浏览和导入尚未开放，可切换为 JPEG 或全部格式"
+            return
+        }
         if(local) {
             footer.visibility=View.GONE;selectAll.visibility=View.GONE;cancelSelection.visibility=View.GONE
             more.visibility=View.GONE;screen.connectionActions.visibility=View.GONE;screen.emptyReadMore.visibility=View.GONE
