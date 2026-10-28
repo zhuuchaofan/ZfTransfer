@@ -16,6 +16,9 @@ object UserIssues {
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         val detail = chain.joinToString(" ") { it.message.orEmpty() }.lowercase()
         return when {
+            "请连接原来的相机" in detail -> UserIssue("请连接原来的相机", "未完成任务属于另一台相机。请连接原相机后重试，或重新选择照片开始新任务。", Recovery.WIFI_SETTINGS)
+            "相机照片已变化" in detail || "剩余任务已变化" in detail -> UserIssue("照片信息发生变化", "为避免下载错误照片，本次重试已停止。请重新浏览相机并选择需要的照片。", Recovery.NONE)
+            "无法保存传输任务记录" in detail || "无法保存导入记录" in detail -> UserIssue("无法保存传输记录", "请检查手机存储空间。已发布到相册的照片仍保留，但可能无法确认导入历史，请先在相册核对。", Recovery.STORAGE_SETTINGS)
             chain.any { it is SecurityException } -> UserIssue("需要访问权限", "请在系统设置中检查本应用的相关权限。连接相机 Wi-Fi 也可以在系统设置中手动完成。", Recovery.APP_SETTINGS)
             "enospc" in detail || "no space left" in detail || "disk full" in detail -> UserIssue("手机存储空间不足", "请清理手机空间后重试。已经成功导入的照片仍保留，不需要全部重新导入。", Recovery.STORAGE_SETTINGS)
             "文件大小不一致" in detail || "文件不完整" in detail || "ended early" in detail || "without an end data" in detail || "disconnected during transfer" in detail -> UserIssue("照片没有完整传输", "本次照片未能完整接收，不会标记为已导入。请确认相机连接后，重新选择未完成的照片。", Recovery.WIFI_SETTINGS)

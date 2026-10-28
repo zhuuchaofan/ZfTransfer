@@ -1,4 +1,4 @@
-# Zf 传图 · 0.3.3 测试版
+# Zf 传图 · 0.4.0 测试版
 
 面向小米 14 与 Nikon Zf，通过相机 Wi-Fi 浏览照片，并把 JPEG 原图保存到系统相册 `Pictures/ZfTransfer`。
 
@@ -16,10 +16,10 @@
 
 ## 安装
 
-本地当前安装包位于工程上层 `ZfTransfer-0.3.3-debug.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
+本地当前安装包位于工程上层 `ZfTransfer-0.4.0-debug.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
 
 ```powershell
-& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.3.3-debug.apk'
+& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.4.0-debug.apk'
 ```
 
 沿用公开测试签名，覆盖安装保留下载记录。不要为了更新先卸载应用；卸载或清除数据会丢失历史记录。
@@ -59,3 +59,14 @@ powershell -ExecutionPolicy Bypass -File ..\build-local.ps1
 已加载本地原图或高清临时预览后，双击照片在适屏与两倍放大之间切换；双指捏合或张开在一至五倍之间缩放，放大后可以单指拖动。双指缩放以手指中心为基准，并支持中心位置移动。拖动限制在照片边界内；当某一方向的照片仍小于视口，该方向居中。切换照片、替换快速缩略图或改变视口尺寸时重置为适屏状态，避免将上一张的缩放位置套用到下一张。
 
 快速缩略图不启用放大，需等待高清加载完成。缩放仅改变显示矩阵，不重新下载或改动相册原图；当前高清解码最长边仍为 2560 像素，大倍率放大不会增加原图之外的细节。新增七项缩放几何回归测试，总计四十项自动化测试通过。双指触摸手感仍需真实手机操作确认。
+
+
+## 分层与批量恢复（0.4.0）
+
+图库构建、单元格、预览窗口分别由 GalleryScreen、GalleryPhotoCell、PhotoPreviewDialog 管理。CameraSession 持有相机连接、网络与串行执行器；ImportRepository 管理原有 saved_ 记录、文件验证与 MediaStore 发布；TransferCoordinator/TransferRunner 管理批量任务，TransferQueueStore/TransferQueueCodec 保存剩余项。Activity 仍负责屏幕状态、自动连接策略与图片加载，后续可以继续渐进拆分。
+
+失败或停止后，页面会出现“重试未完成”。重连同一台相机后点击；每项核对完整元数据，再跳过已确认存在的文件，重新下载未完成的整张照片。剩余任务记录可跨应用重启保留。没有可靠相机身份时不支持安全重试；照片元数据或句柄变化时拒绝自动恢复，需要重新浏览选择。新任务替换旧任务前会确认。
+
+这是前台批量恢复，不支持后台服务、熄屏持续传输或字节级断点续传。进程被强制杀死时，尚未发布的 MediaStore 文件可能仍处于待处理状态；本版没有新增启动清理机制。极端情况下，照片发布成功但历史记录落盘失败，无法可靠确认该照片，重试可能产生副本。
+
+验收：47 项本地自动化测试涵盖原协议、选择、缓存、缩放、队列失败/取消/重试、相机身份和任务序列化。真实相机的断网恢复、强制退出后恢复、相册保存与缩放回归需要重新实测，旧版传输证据不能代替本版验收。

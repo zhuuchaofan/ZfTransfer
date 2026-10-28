@@ -2,7 +2,6 @@ package com.xiaozhu.zftransfer
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ContentValues
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -20,18 +19,13 @@ import android.net.wifi.WifiInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.provider.Settings
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
 import io.github.noisetta.nikonpull.ptp.*
-import java.io.FilterOutputStream
-import java.io.OutputStream
 import java.net.Inet4Address
-import java.security.MessageDigest
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Foreground-only, read-only camera client. GPL-3.0, see bundled notices. */
 class MainActivity : Activity() {
@@ -44,16 +38,21 @@ class MainActivity : Activity() {
     private var stoppedNetwork: Long? = null
     private var profileAttempted = false
     private var pendingProfile: WifiProfile? = null
-    @Volatile private var sessionNetwork: Network? = null
+    private val session = CameraSession()
+    private var sessionNetwork: Network?
+        get() = session.network
+        set(value) { session.network = value }
     private val wifiStore by lazy { WifiProfileStore(this) }
     private data class WifiEndpoint(val network: Network, val address: String, val caps: NetworkCapabilities)
-    private val worker = Executors.newSingleThreadScheduledExecutor()
-    private val busy = AtomicBoolean(false)
+    private val worker get() = session.worker
+    private val busy get() = session.busy
     private val imageWorker = Executors.newSingleThreadExecutor()
     private val originalPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "original_previews")) }
     @Volatile private var imageSession = java.util.UUID.randomUUID().toString()
     @Volatile private var previewGeneration = 0L
-    @Volatile private var client: PtpIpClient? = null
+    private var client: PtpIpClient?
+        get() = session.client
+        set(value) { session.client = value }
     @Volatile private var stopped = false
     private lateinit var status: TextView
     private lateinit var grid: PhotoGrid
@@ -97,146 +96,65 @@ class MainActivity : Activity() {
     private lateinit var host: EditText
     private lateinit var connect: Button
     private lateinit var more: Button
+    private lateinit var retryTransfer: Button
     private lateinit var download: Button
+    private val transfers by lazy { TransferCoordinator(imports, TransferQueueStore(getSharedPreferences("transfer_queue", MODE_PRIVATE))) }
     private lateinit var progress: ProgressBar
     private val selected = linkedMapOf<Long, CameraObject>()
 
     private val logs = ArrayDeque<String>()
     private var handles = emptyList<Long>()
     private var cursor = 0
-    private var cameraIdentity: String? = null
+    private val imports by lazy { ImportRepository(contentResolver, prefs, ::log) }
+    private var cameraIdentity: String?
+        get() = imports.identity
+        set(value) { imports.identity = value }
     private val prefs by lazy { getSharedPreferences("transfers", MODE_PRIVATE) }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(surfaceColor)
-            setOnApplyWindowInsetsListener { v, insets ->
-                v.setPadding(dp(16), insets.systemWindowInsetTop, dp(16), insets.systemWindowInsetBottom)
-                insets
-            }
-        }
-        val title = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(14)) }
-        val brand = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        brand.addView(label("Zf", 29f).apply { typeface = android.graphics.Typeface.create("serif", android.graphics.Typeface.ITALIC) })
-        brand.addView(label(" 传图", 24f))
-        title.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        title.addView(ImageButton(this).apply {
-            setImageResource(resource("ic_more", "drawable"))
-            setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "相机设置与日志"
-            setOnClickListener { showSettings() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        root.addView(title)
-        val cameraRow = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(16))
-            contentDescription = "相机连接状态"
-            setOnClickListener { if (client == null && !busy.get()) connectCamera() else showSettings() }
-        }
-        cameraRow.addView(ImageView(this).apply {
-            setImageResource(resource("ic_launcher", "mipmap"))
-            contentDescription = "Zf 传图"
-        }, LinearLayout.LayoutParams(dp(40), dp(40)))
-        cameraLabel = label("Nikon Zf · 尚未连接", 14f).apply { setTextColor(muted); setPadding(dp(12), 0, 0, 0) }
-        cameraRow.addView(cameraLabel)
-        root.addView(cameraRow)
-        host = EditText(this).apply {
-            setText(prefs.getString("host", "")); setSingleLine(true)
-            hint = "相机 IPv4 地址（留空自动识别）"
-            setTextColor(Color.WHITE); setHintTextColor(muted)
-            inputType = android.text.InputType.TYPE_CLASS_PHONE
-        }
-        connect = button("连接相机") { connectCamera() }.apply {
-            backgroundTintList = ColorStateList.valueOf(yellow)
-            setTextColor(surfaceColor); textSize = 16f
-        }
-        val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
-        heading.addView(label("相机照片", 28f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
-        selectAll = textAction("全选") {
-            if (!busy.get()) {
+        val screen = GalleryScreen(this, prefs.getString("host", ""), adapter, object : GalleryScreen.Actions {
+            override fun settings() = showSettings()
+            override fun cameraStatus() { if (client == null && !busy.get()) connectCamera() else showSettings() }
+            override fun connect() = connectCamera()
+            override fun selectAll() { if (!busy.get()) {
+                selectionMode = true; photos.forEach { selected[it.handle] = it }; updateSelection()
+            } }
+            override fun cancelSelection() { if (!busy.get()) { selected.clear(); selectionMode = false; updateSelection() } }
+            override fun preview(index: Int) { if (!busy.get()) showPreview(index) }
+            override fun rangeStart(index: Int) {
                 selectionMode = true
-                photos.forEach { selected[it.handle] = it }; updateSelection()
+                range = RangeSelection(photos.indices.filter { photos[it].handle in selected }.toSet(), index)
+                applyRange(index)
             }
-        }
-        cancelSelection = textAction("取消") {
-            if (!busy.get()) { selected.clear(); selectionMode = false; updateSelection() }
-        }
-        selectAll.visibility = View.GONE; cancelSelection.visibility = View.GONE
-        heading.addView(selectAll); heading.addView(cancelSelection)
-        root.addView(heading)
-        root.addView(label("JPEG 原图", 13f).apply { setTextColor(muted); setPadding(dp(2), 0, 0, dp(16)) })
-        status = label("", 12f).apply { setTextColor(muted); visibility = View.GONE; maxLines = 3 }
-        root.addView(status)
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progressTintList = ColorStateList.valueOf(yellow)
-            visibility = View.GONE
-        }
-        root.addView(progress)
-        grid = PhotoGrid(this).apply {
-            numColumns = 3; horizontalSpacing = dp(8); verticalSpacing = dp(12)
-            stretchMode = GridView.STRETCH_COLUMN_WIDTH
-            adapter = this@MainActivity.adapter
-            setOnItemClickListener { _, _, position, _ ->
-                if (!busy.get()) {
-                    val obj = photos[position]
-                    showPreview(position)
-                }
+            override fun rangeMove(index: Int) = applyRange(index)
+            override fun wifiProfile() = showWifiProfile()
+            override fun wifiSettings() { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            override fun readMore() = readPage()
+            override fun importSelected() = downloadSelected()
+            override fun retry() {
+                if (!transfers.queue.canRetry(cameraIdentity)) showNotice("请连接原来的相机", "未完成任务属于原相机，请连接原相机后再重试。")
+                else startImport(transfers.queue.remaining, true, retry = true)
             }
-            onRangeStart = { anchor ->
-                selectionMode = true
-                range = RangeSelection(photos.indices.filter { photos[it].handle in selected }.toSet(), anchor)
-                applyRange(anchor)
-            }
-            onRangeMove = { applyRange(it) }
-        }
-        val gallery = FrameLayout(this)
-        val empty = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            setPadding(dp(24), 0, dp(24), dp(48))
-        }
-        empty.addView(ImageView(this).apply {
-            setImageResource(resource("ic_launcher", "mipmap"))
-            contentDescription = "相机连接"
-        }, LinearLayout.LayoutParams(dp(76), dp(76)).apply { bottomMargin = dp(24) })
-        emptyTitle = label("让照片，回到你的生活", 22f).apply { gravity = Gravity.CENTER }
-        emptyHint = label("连接相机 Wi-Fi 后，将自动识别\n也可在应用内设置 Wi-Fi 名和密码", 14f).apply {
-            gravity = Gravity.CENTER; setTextColor(muted); setLineSpacing(dp(5).toFloat(), 1f)
-        }
-        empty.addView(emptyTitle)
-        empty.addView(emptyHint, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(24) })
-        empty.addView(connect, LinearLayout.LayoutParams(-1, dp(52)))
-        empty.addView(textAction("在应用内连接 Wi-Fi") { showWifiProfile() }.apply {
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, dp(48)))
-        empty.addView(textAction("打开 Wi-Fi 设置") { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.apply {
-            gravity = Gravity.CENTER; setTextColor(muted)
-        }, LinearLayout.LayoutParams(-1, dp(52)))
-        gallery.addView(grid, FrameLayout.LayoutParams(-1, -1))
-        gallery.addView(empty, FrameLayout.LayoutParams(-1, -1))
-        grid.emptyView = empty
-        root.addView(gallery, LinearLayout.LayoutParams(-1, 0, 1f))
-        more = button("继续读取照片") { readPage() }.apply {
-            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-            textSize = 13f; visibility = View.GONE
-        }
-        root.addView(more, LinearLayout.LayoutParams(-1, dp(44)))
-        footer = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(12)); visibility = View.GONE
-        }
-        selectionLabel = label("长按滑动多选", 13f).apply { setTextColor(muted) }
-        footer.addView(selectionLabel, LinearLayout.LayoutParams(0, -2, 1f))
-        download = button("导入原图", ::downloadSelected).apply {
-            backgroundTintList = ColorStateList.valueOf(yellow)
-            setTextColor(surfaceColor); textSize = 16f
-        }
-        footer.addView(download, LinearLayout.LayoutParams(dp(154), dp(52)))
-        root.addView(footer)
-        download.isEnabled = false; download.alpha = 0.4f
-        setContentView(root)
+        })
+        status = screen.status
+        grid = screen.grid
+        selectionLabel = screen.selectionLabel
+        cameraLabel = screen.cameraLabel
+        selectAll = screen.selectAll
+        cancelSelection = screen.cancelSelection
+        footer = screen.footer
+        emptyTitle = screen.emptyTitle
+        emptyHint = screen.emptyHint
+        host = screen.host
+        connect = screen.connect
+        more = screen.more
+        download = screen.download
+        progress = screen.progress
+        retryTransfer = screen.retryTransfer
+        setContentView(screen.root)
+        updateRetryControl()
         cameraWifi = CameraWifi(this, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive -> presentIssue(issue, interactive) }
         runCatching { cameraWifi.watch() }.onFailure { report("无法监听 Wi-Fi 状态，可点击连接相机手动重试。") }
         worker.scheduleWithFixedDelay({
@@ -251,7 +169,7 @@ class MainActivity : Activity() {
                 }
             }
         }, 30, 30, java.util.concurrent.TimeUnit.SECONDS)
-        log("ZfTransfer 0.3.3; Android ${android.os.Build.VERSION.RELEASE}; ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        log("ZfTransfer 0.4.0; Android ${android.os.Build.VERSION.RELEASE}; ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -289,7 +207,7 @@ class MainActivity : Activity() {
                     userStopped = true; stoppedNetwork = sessionNetwork?.networkHandle
                     autoGate.stop(stoppedNetwork)
                     if (cameraWifi.requesting) cameraWifi.releaseRequest()
-                    client?.abort(); client = null; sessionNetwork = null
+                    session.disconnect()
                     report("已停止，成功导入的照片仍保留。点击顶部相机状态可重新连接。")
                     setBusy(busy.get())
                 }
@@ -370,7 +288,7 @@ class MainActivity : Activity() {
             return
         }
         if (client != null) {
-            client?.abort(); client = null; sessionNetwork = null; setBusy(false)
+            session.disconnect(); setBusy(false)
         }
         cameraWifi.request(profile, !automatic)
     }
@@ -425,7 +343,7 @@ class MainActivity : Activity() {
         autoGate.lost(network.networkHandle)
         if (network.networkHandle == stoppedNetwork) { userStopped = false; stoppedNetwork = null }
         if (sessionNetwork == network) {
-            client?.abort(); client = null; sessionNetwork = null
+            session.disconnect()
             report("相机 Wi-Fi 已断开。重新连接相机热点后将自动识别，已导入照片仍保留。")
             setBusy(busy.get())
         }
@@ -560,42 +478,9 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && ::cameraWifi.isInitialized) cameraWifi.schedule()
     }
-    private fun photoCell(obj: CameraObject): View {
-        val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val frame = FrameLayout(this).apply {
-            background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(5).toFloat() }
-            clipToOutline = true
-        }
-        val width = ((resources.displayMetrics.widthPixels - dp(48)) / 3).coerceAtLeast(dp(60))
-        val image = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setImageBitmap(thumbnail(obj.handle))
-            setBackgroundColor(0xff242629.toInt())
-            contentDescription = "预览 ${obj.filename}"
-        }
-        frame.addView(image, FrameLayout.LayoutParams(-1, -1))
-        if (thumbnail(obj.handle) == null) frame.addView(label("无预览", 12f), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        val check = ImageView(this).apply {
-            setImageResource(resource(if (obj.handle in selected) "ic_selected" else "ic_unselected", "drawable"))
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            contentDescription = "选择 ${obj.filename}"
-            isEnabled = !busy.get()
-            setOnClickListener { toggle(obj) }
-        }
-        frame.addView(check, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.RIGHT))
-        if (obj.handle in imported) {
-            val badge = label("已导入", 10f).apply {
-                setPadding(dp(7), dp(3), dp(7), dp(3))
-                background = GradientDrawable().apply { setColor(0xdd202225.toInt()); cornerRadius = dp(12).toFloat() }
-            }
-            frame.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.RIGHT))
-        }
-        if (obj.handle in selected) frame.foreground = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(2), yellow) }
-        val frameHeight = if (grid.height > 0) minOf(width, ((grid.height - dp(36)) / 4 - dp(26)).coerceAtLeast(dp(68))) else width
-        cell.addView(frame, LinearLayout.LayoutParams(-1, frameHeight))
-        cell.addView(label(obj.filename, 10f).apply { setTextColor(muted); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE })
-        return cell
-    }
+    private val cells by lazy { GalleryPhotoCell(this) }
+    private fun photoCell(obj: CameraObject): View = cells.create(obj, thumbnail(obj.handle),
+        obj.handle in selected, obj.handle in imported, !busy.get(), grid.height) { toggle(obj) }
     private fun showPreview(index: Int) {
         if (index !in photos.indices) return
         previewIndex = index
@@ -603,51 +488,17 @@ class MainActivity : Activity() {
             renderPreview()
             return
         }
-        val dialog = Dialog(this, android.R.style.Theme_Material_NoActionBar)
+        val dialog = PhotoPreviewDialog(this, ::downloadDetailedPreview,
+            { showPreview(previewIndex - 1) }, { showPreview(previewIndex + 1) }, {
+                val obj = photos[previewIndex]; preview?.dismiss(); requestImport(listOf(obj))
+            }, { toggle(photos[previewIndex]); preview?.dismiss() })
         preview = dialog
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(surfaceColor)
-        }
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(ImageButton(this).apply {
-            setImageResource(resource("ic_back", "drawable")); setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "返回照片"; setOnClickListener { dialog.dismiss() }
-        }, LinearLayout.LayoutParams(dp(44), dp(48)))
-        header.addView(label("照片预览", 18f))
-        root.addView(header)
-        previewImage = ZoomPhotoView(this)
-        root.addView(previewImage, LinearLayout.LayoutParams(-1, 0, 1f))
-        previewStrip = LinearLayout(this)
-        root.addView(HorizontalScrollView(this).apply { addView(previewStrip); isHorizontalScrollBarEnabled = false })
-        previewName = label("", 20f)
-        root.addView(previewName, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        previewQuality = label("快速缩略预览", 12f).apply { setTextColor(muted) }
-        root.addView(previewQuality)
-        previewSize = label("", 13f).apply { setTextColor(muted) }
-        root.addView(previewSize)
-        previewHigh = button("加载高清预览") { downloadDetailedPreview() }
-        root.addView(previewHigh, LinearLayout.LayoutParams(-1, dp(44)))
-        val navigation = LinearLayout(this)
-        previewPrevious = textAction("上一张") { showPreview(previewIndex - 1) }
-        previewNext = textAction("下一张") { showPreview(previewIndex + 1) }
-        navigation.addView(previewPrevious, LinearLayout.LayoutParams(0, dp(44), 1f))
-        navigation.addView(previewNext, LinearLayout.LayoutParams(0, dp(44), 1f))
-        root.addView(navigation)
-        previewImport = button("导入这张原图") {
-            val obj = photos[previewIndex]
-            dialog.dismiss(); requestImport(listOf(obj))
-        }.apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surfaceColor) }
-        root.addView(previewImport, LinearLayout.LayoutParams(-1, dp(52)))
-        previewSelect = textAction("") { toggle(photos[previewIndex]); dialog.dismiss() }
-        root.addView(previewSelect, LinearLayout.LayoutParams(-1, dp(48)))
-        root.setOnApplyWindowInsetsListener { view, insets ->
-            view.setPadding(dp(16), insets.systemWindowInsetTop + dp(8), dp(16), insets.systemWindowInsetBottom + dp(8))
-            insets
-        }
+        previewImage = dialog.image; previewStrip = dialog.strip; previewName = dialog.name
+        previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
+        previewPrevious = dialog.previous; previewNext = dialog.next
+        previewImport = dialog.import; previewSelect = dialog.select
         renderPreview()
-        dialog.setContentView(root)
         dialog.show()
-        dialog.window?.setLayout(-1, -1)
     }
     private fun renderPreview() {
         val obj = photos[previewIndex]
@@ -737,7 +588,7 @@ class MainActivity : Activity() {
             try { action() }
             catch (e: Exception) {
                 log("FAIL ${e.stackTraceToString()}")
-                client?.abort(); client = null; sessionNetwork = null
+                if (operation == UserOperation.CONNECT) session.disconnect() else session.recoverAfterFailure()
                 if (userStopped) report("已停止。已成功导入的照片仍保留，未完成文件不会标记为已导入。")
                 else presentIssue(UserIssues.from(e, operation), !silentErrors)
             } finally {
@@ -764,6 +615,7 @@ class MainActivity : Activity() {
         emptyTitle.text = if (client == null) "让照片，回到你的生活" else "正在寻找相机中的照片"
         emptyHint.text = if (client == null) "连接相机 Wi-Fi 后，将自动识别\n也可在应用内设置 Wi-Fi 名和密码" else "仅显示 JPEG 原图；可继续读取下一批"
         updateGalleryControls()
+        updateRetryControl()
         adapter.notifyDataSetChanged()
     }
     private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) {
@@ -792,7 +644,7 @@ class MainActivity : Activity() {
                 }, 3000)
             }
         }) {
-            client?.abort(); client = null
+            session.disconnect()
             val candidate = wifiEndpoints(manual, networkOverride).firstOrNull()
                 ?: error("Wi-Fi 尚未就绪：请保持连接相机热点，等待获取 IPv4 地址后重试")
             val network = candidate.network
@@ -882,27 +734,29 @@ class MainActivity : Activity() {
         more.visibility = if (client != null && cursor < handles.size) View.VISIBLE else View.GONE
     }
     private fun savedExists(obj: CameraObject): Boolean = verifiedSavedUri(obj) != null
-    private fun verifiedSavedUri(obj: CameraObject, recordKey: String? = duplicateKey(obj)): Uri? {
-        val key = recordKey ?: return null
-        val saved = prefs.getString(key, null)?.let(Uri::parse) ?: return null
-        return runCatching {
-            val valid = contentResolver.query(saved, arrayOf(MediaStore.Images.Media.SIZE, MediaStore.Images.Media.IS_PENDING, MediaStore.Images.Media.MIME_TYPE), null, null, null)?.use {
-                it.moveToFirst() && ImportEvidence.matches(obj.size, it.getLong(0), it.getInt(1), it.getString(2))
-            } ?: false
-            saved.takeIf { valid && (contentResolver.openFileDescriptor(saved, "r")?.use { it.statSize == obj.size } ?: false) }
-        }.getOrNull()
-    }
+    private fun verifiedSavedUri(obj: CameraObject, recordKey: String? = duplicateKey(obj)): Uri? = imports.verifiedUri(obj, recordKey)
     private fun requestImport(items: List<CameraObject>) {
         if (busy.get() || client == null || items.isEmpty()) return
+        if (transfers.queue.remaining.isNotEmpty()) {
+            AlertDialog.Builder(this).setTitle("替换未完成任务？")
+                .setMessage("当前仍有 ${transfers.queue.remaining.size} 张未完成。开始新任务会替换剩余任务记录，已导入照片保留。")
+                .setPositiveButton("开始新任务") { _, _ -> checkDuplicates(items) }
+                .setNegativeButton("取消", null).show()
+            return
+        }
+        checkDuplicates(items)
+    }
+    private fun checkDuplicates(items: List<CameraObject>) {
+        var checked = false
         var duplicates = emptySet<Long>()
         task(operation = UserOperation.IMPORT, onComplete = {
-            if (client != null) {
+            if (checked && client != null) {
                 items.forEach { if (it.handle in duplicates) imported.add(it.handle) else imported.remove(it.handle) }
                 adapter.notifyDataSetChanged()
                 if (duplicates.isEmpty()) startImport(items, false)
                 else showDuplicateChoices(items, duplicates.size)
             }
-        }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet() }
+        }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet(); checked = true }
     }
     private fun showDuplicateChoices(items: List<CameraObject>, duplicateCount: Int) {
         val dialog = Dialog(this)
@@ -932,62 +786,31 @@ class MainActivity : Activity() {
     private fun downloadSelected() {
         requestImport(selected.values.toList())
     }
-    private fun startImport(items: List<CameraObject>, skipExisting: Boolean) {
+    private fun updateRetryControl() {
+        if (!::retryTransfer.isInitialized) return
+        val count = transfers.queue.remaining.size
+        retryTransfer.visibility = if (count > 0) View.VISIBLE else View.GONE
+        retryTransfer.text = "重试未完成（$count 张）"
+        retryTransfer.isEnabled = !busy.get() && client != null
+    }
+    private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
+        if (items.isEmpty()) return
         task(operation = UserOperation.IMPORT) {
             val c = client ?: error("请先连接相机")
-            var done = 0
-            var skipped = 0
-            for ((index, obj) in items.withIndex()) {
-                check(client === c) { "已停止传输" }
-                report("正在下载 ${index + 1}/${items.size}：${obj.filename}")
-                val key = duplicateKey(obj)
-                val exists = skipExisting && savedExists(obj)
-                if (!exists) {
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, obj.filename.replace(Regex("[\\\\/\\p{Cntrl}]"), "_"))
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZfTransfer")
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
-                    }
-                    val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                        ?: error("无法创建相册文件")
-                    var published = false
-                    try {
-                        var count = 0L
-                        val raw = contentResolver.openOutputStream(uri, "w") ?: error("无法写入相册")
-                        val output = object : FilterOutputStream(raw) {
-                            override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); count += len }
-                            override fun write(b: Int) { out.write(b); count++ }
-                        }
-                        output.use {
-                            var lastPercent = -1
-                            c.downloadObject(obj.handle, it) { p ->
-                                val percentage = if (obj.size > 0) (p.bytesTransferred * 100 / obj.size).coerceIn(0, 100).toInt() else 0
-                                if (percentage != lastPercent) { lastPercent = percentage; ui { progress.progress = percentage } }
-                            }
-                        }
-                        check(count == obj.size) { "文件大小不一致：$count / ${obj.size}，未保留不完整文件" }
-                        check(contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) == 1) {
-                            "相册文件发布失败"
-                        }
-                        published = true
-                        if (key != null) prefs.edit().putString(key, uri.toString()).apply()
-                        log("Saved original JPEG; bytes=$count")
-                    } finally {
-                        if (!published) contentResolver.delete(uri, null, null)
-                    }
-                    done++
-                } else { skipped++; log("Skipped existing original") }
-                val verified = savedExists(obj)
-                ui { selected.remove(obj.handle); if (verified) imported.add(obj.handle) else imported.remove(obj.handle); updateSelection() }
-            }
+            val (done, skipped) = transfers.run(c, items, skipExisting, retry,
+                checkActive = { check(client === c) { "已停止传输" } },
+                progress = { index, obj, percentage ->
+                    report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
+                    ui { progress.progress = percentage }
+                }, completed = { obj, verified -> ui {
+                    selected.remove(obj.handle)
+                    if (verified) imported.add(obj.handle) else imported.remove(obj.handle)
+                    updateSelection(); updateRetryControl()
+                } })
             report("已导入 $done 张，跳过 $skipped 张。保存至系统相册 Pictures/ZfTransfer。")
         }
     }
-    private fun duplicateKey(obj: CameraObject): String? = cameraIdentity?.takeIf { obj.captureDate.isNotBlank() && obj.size > 0 }?.let {
-        val content = "$it|${obj.storageId}|${obj.handle}|${obj.filename}|${obj.captureDate}|${obj.size}"
-        "saved_" + MessageDigest.getInstance("SHA-256").digest(content.toByteArray()).joinToString("") { b -> "%02x".format(b) }
-    }
+    private fun duplicateKey(obj: CameraObject): String? = imports.key(obj)
     private fun shareLogs() {
         val text = synchronized(this) { logs.joinToString("\n") }
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
@@ -1006,8 +829,7 @@ class MainActivity : Activity() {
         issueDialog?.dismiss()
         connectionHandler.removeCallbacksAndMessages(null)
         if (::cameraWifi.isInitialized) cameraWifi.close()
-        client?.abort()
-        worker.shutdownNow()
+        session.close()
         previewGeneration++
         imageWorker.shutdownNow()
         super.onDestroy()

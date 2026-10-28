@@ -4,6 +4,70 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GalleryInteractionTest {
+    private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun pendingTaskRoundTripsWithCameraAndExactMetadata() {
+        val obj = queuedPhoto(42).copy(filename = "照片.JPG")
+        val queue = TransferQueue().apply { replace("Nikon|Zf|serial", listOf(obj)) }
+        val restored = TransferQueueCodec.decode(TransferQueueCodec.encode(queue))
+        assertEquals(queue.identity, restored.identity); assertEquals(queue.remaining, restored.remaining)
+        assertTrue(restored.canRetry(queue.identity))
+    }
+    @Test fun truncatedTaskCannotBecomeAnEmptySuccessfulTask() {
+        val queue = TransferQueue().apply { replace("camera", listOf(queuedPhoto(1))) }
+        val encoded = TransferQueueCodec.encode(queue)
+        assertTrue(runCatching { TransferQueueCodec.decode(encoded.dropLast(8)) }.isFailure)
+        assertTrue(runCatching { TransferQueueCodec.decode("invalid") }.isFailure)
+    }
+    @Test fun retryRejectsAStaleTaskSnapshot() {
+        val obj = queuedPhoto(1); val queue = TransferQueue().apply { replace("camera", listOf(obj)) }
+        assertTrue(runCatching {
+            TransferRunner(queue) {}.run("camera", listOf(queuedPhoto(2)), true, true, {}, { it }, { false }, { _, _ -> }, { _, _ -> })
+        }.isFailure)
+        assertEquals(listOf(obj), queue.remaining)
+    }
+    @Test fun failedBatchRetainsOnlyUnfinishedPhotosAndRetrySkipsVerifiedFiles() {
+        val a = queuedPhoto(1); val b = queuedPhoto(2); val c = queuedPhoto(3)
+        val queue = TransferQueue(); val saved = mutableSetOf<Long>(); var writes = 0
+        val runner = TransferRunner(queue) { writes++ }
+        try {
+            runner.run("camera", listOf(a,b,c), false, false, {}, { it }, { it.handle in saved },
+                { _, obj -> if (obj == b) error("connection lost") else saved.add(obj.handle) }, { _, _ -> })
+            fail("must fail")
+        } catch (_: IllegalStateException) { }
+        assertEquals(listOf(b,c), queue.remaining)
+        // Simulates gallery publication succeeding immediately before interruption.
+        saved.add(b.handle)
+        val result = runner.run("camera", queue.remaining, true, true, {}, { it }, { it.handle in saved },
+            { _, obj -> saved.add(obj.handle) }, { _, _ -> })
+        assertEquals(1 to 1, result); assertTrue(queue.remaining.isEmpty()); assertTrue(writes >= 4)
+    }
+    @Test fun retryRejectsDifferentCameraAndChangedObjectBeforeSaving() {
+        val obj = queuedPhoto(1); val queue = TransferQueue().apply { replace("camera", listOf(obj)) }
+        val runner = TransferRunner(queue) {}; var saves = 0
+        for (identity in listOf("other", "camera")) {
+            try {
+                runner.run(identity, queue.remaining, true, true, {}, { it.copy(size = 200) }, { false },
+                    { _, _ -> saves++ }, { _, _ -> }); fail("must reject")
+            } catch (_: IllegalStateException) { }
+        }
+        assertEquals(0, saves); assertEquals(listOf(obj), queue.remaining)
+    }
+    @Test fun cancellationKeepsRemainingTaskAndDoesNotStartPhoto() {
+        val obj = queuedPhoto(1); val queue = TransferQueue(); var saves = 0
+        try {
+            TransferRunner(queue) {}.run("camera", listOf(obj), false, false, { error("stopped") }, { it },
+                { false }, { _, _ -> saves++ }, { _, _ -> }); fail("must cancel")
+        } catch (_: IllegalStateException) { }
+        assertEquals(0, saves); assertEquals(listOf(obj), queue.remaining)
+    }
+    @Test fun unidentifiedCameraCannotRetryAndQueueSnapshotsDoNotChange() {
+        val a = queuedPhoto(1); val b = queuedPhoto(2)
+        val queue = TransferQueue().apply { replace(null, listOf(a,b)) }
+        val snapshot = queue.remaining; queue.completed(a)
+        assertEquals(listOf(a,b), snapshot); assertEquals(listOf(b), queue.remaining)
+        assertFalse(queue.canRetry(null))
+        assertFalse(queue.matches(b.copy(captureDate = ""), b.copy(captureDate = "")))
+    }
     @Test fun movingPinchFocusMovesPhotoWithoutChangingScale() {
         val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f); scale(2f, 500f, 400f) }
         state.scale(1f, 500f, 400f, 80f, 40f)
