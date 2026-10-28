@@ -37,6 +37,11 @@ class PhotoZoomState {
         if (!ready || !dx.isFinite() || !dy.isFinite()) return
         x += dx; y += dy; clamp()
     }
+    fun snapshot() = PhotoTransform(zoom, x, y)
+    fun restore(value: PhotoTransform) {
+        if (!value.zoom.isFinite() || !value.x.isFinite() || !value.y.isFinite()) return
+        zoom = value.zoom.coerceIn(1f, 5f); x = value.x; y = value.y; clamp()
+    }
     fun doubleTap(focusX: Float, focusY: Float) {
         if (zoom > 1.01f) reset() else scale(2f, focusX, focusY)
     }
@@ -46,5 +51,13 @@ class PhotoZoomState {
         val displayedHeight = imageHeight * baseScale * zoom
         x = if (displayedWidth <= width) (width - displayedWidth) / 2 else x.coerceIn(width - displayedWidth, 0f)
         y = if (displayedHeight <= height) (height - displayedHeight) / 2 else y.coerceIn(height - displayedHeight, 0f)
+    }
+}
+
+
+data class PhotoTransform(val zoom: Float, val x: Float, val y: Float) {
+    fun towards(target: PhotoTransform, fraction: Float): PhotoTransform {
+        val t = if (fraction.isFinite()) fraction.coerceIn(0f, 1f) else 0f
+        return PhotoTransform(zoom + (target.zoom - zoom) * t, x + (target.x - x) * t, y + (target.y - y) * t)
     }
 }

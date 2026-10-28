@@ -32,7 +32,7 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () 
     val name = label("", 20f)
     val quality = label("快速缩略预览", 12f).apply { setTextColor(muted) }
     val size = label("", 13f).apply { setTextColor(muted) }
-    val high = button("加载高清预览", onHigh)
+    val high = action("原图", onHigh).apply { contentDescription = "查看原图" }
     val previous = action("上一张", onPrevious)
     val next = action("下一张", onNext)
     val import = button("导入这张原图", onImport).apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surface) }
@@ -44,11 +44,13 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () 
             setImageResource(context.resources.getIdentifier("ic_back", "drawable", context.packageName)); setBackgroundColor(Color.TRANSPARENT)
             contentDescription = "返回照片"; setOnClickListener { dismiss() }
         }, LinearLayout.LayoutParams(dp(44), dp(48)))
-        header.addView(label("照片预览", 18f)); root.addView(header)
+        header.addView(label("照片预览", 18f), LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(high, LinearLayout.LayoutParams(-2, dp(48)))
+        root.addView(header)
         root.addView(image, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(strip, LinearLayout.LayoutParams(-1, dp(56)))
         root.addView(name, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        root.addView(quality); root.addView(size); root.addView(high, LinearLayout.LayoutParams(-1, dp(44)))
+        root.addView(quality); root.addView(size)
         root.addView(LinearLayout(context).apply {
             addView(previous, LinearLayout.LayoutParams(0, dp(44), 1f)); addView(next, LinearLayout.LayoutParams(0, dp(44), 1f))
         })

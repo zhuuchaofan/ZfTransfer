@@ -5,6 +5,22 @@ import org.junit.Test
 
 class GalleryInteractionTest {
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun zoomAnimationMidpointPreservesTappedImagePoint() {
+        val state = PhotoZoomState().apply { fit(1000f,800f,4000f,2000f) }
+        val start = state.snapshot(); state.doubleTap(250f,400f); val target = state.snapshot()
+        state.restore(start.towards(target,0.5f))
+        assertEquals(1.5f,state.zoom,0.001f)
+        assertEquals(250f,state.x + 1000f * state.baseScale * state.zoom,0.001f)
+        assertEquals(400f,state.y + 1000f * state.baseScale * state.zoom,0.001f)
+        state.restore(target); assertEquals(2f,state.zoom,0.001f)
+    }
+    @Test fun interruptedAnimationCanContinueFromItsCurrentTransform() {
+        val state = PhotoZoomState().apply { fit(1000f,800f,4000f,2000f) }
+        val start = state.snapshot(); state.doubleTap(250f,400f); val target = state.snapshot()
+        state.restore(start.towards(target,0.4f)); val interrupted = state.snapshot()
+        state.pan(20f,0f); assertEquals(interrupted.x + 20f,state.x,0.001f)
+        state.restore(PhotoTransform(Float.NaN,0f,0f)); assertEquals(1.4f,state.zoom,0.001f)
+    }
     @Test fun repeatedClicksDoNotRestartNetworkSettlingDeadline() {
         val state = ConnectionPreparation()
         assertEquals(1500L,state.waitMillis(1,"192.168.1.1",100))

@@ -74,7 +74,10 @@ class MainActivity : Activity() {
     private lateinit var previewName: TextView
     private lateinit var previewSize: TextView
     private lateinit var previewQuality: TextView
-    private lateinit var previewHigh: Button
+    private lateinit var previewHigh: TextView
+    private var previewOriginalAvailable = false
+    private var previewChecking = false
+    private var originalDialog: Dialog? = null
     private lateinit var previewImport: Button
     private lateinit var previewStrip: PhotoFilmstrip
     private lateinit var previewSelect: TextView
@@ -183,7 +186,7 @@ class MainActivity : Activity() {
         runtime.attach(runtimeListener)
         runtime.watch()
         renderRuntime()
-        log("ZfTransfer 0.5.3; Android ${android.os.Build.VERSION.RELEASE}")
+        log("ZfTransfer 0.5.4; Android ${android.os.Build.VERSION.RELEASE}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -394,12 +397,14 @@ class MainActivity : Activity() {
                         cached != null -> "原图临时预览 · 双击或双指缩放"
                         else -> "清晰预览 ${bitmap.width} × ${bitmap.height} · 双击或双指缩放"
                     }
-                    previewHigh.visibility = if (uri != null || cached != null) View.GONE else View.VISIBLE
-                    previewHigh.isEnabled = !busy.get() && client != null
+                    previewChecking = false
+                    previewOriginalAvailable = uri != null || cached != null
+                    updateOriginalAction()
                 } else {
                     previewQuality.text = "正在加载清晰预览…"
-                    previewHigh.visibility = View.VISIBLE
-                    previewHigh.isEnabled = !busy.get() && client != null
+                    previewChecking = false
+                    previewOriginalAvailable = false
+                    updateOriginalAction()
                     runtime.requestMediumPreview(obj, key,
                         { generation == previewGeneration && !stopped && session == imageSession },
                         { file ->
@@ -411,6 +416,35 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+    private fun updateOriginalAction() {
+        previewHigh.text = "原图"
+        previewHigh.visibility = View.VISIBLE
+        previewHigh.isEnabled = !previewChecking && !previewOriginalAvailable && !busy.get() && client != null
+        previewHigh.alpha = if (previewHigh.isEnabled) 1f else 0.4f
+        previewHigh.contentDescription = if (previewOriginalAvailable) "当前为原图预览" else "查看原图"
+    }
+    private fun confirmOriginalPreview() {
+        val obj = photos.getOrNull(previewIndex) ?: return
+        if (!previewHigh.isEnabled) return
+        val generation = previewGeneration
+        val size = "%.1f".format(obj.size / 1048576.0)
+        originalDialog?.dismiss()
+        val dialog = Dialog(this)
+        originalDialog = dialog
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(24))
+            background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(20).toFloat() }
+        }
+        sheet.addView(label("查看原图", 21f))
+        sheet.addView(label("需要从相机加载约 $size MB，用于查看细节。此次加载只作临时预览，不会导入相册。", 14f).apply { setTextColor(muted) })
+        sheet.addView(button("加载原图（$size MB）") {
+            dialog.dismiss()
+            if (generation == previewGeneration && !previewOriginalAvailable && !busy.get()) downloadDetailedPreview()
+        }.apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surfaceColor) }, LinearLayout.LayoutParams(-1, dp(52)))
+        sheet.addView(textAction("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(-1, dp(48)))
+        dialog.setContentView(sheet); dialog.show()
+        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); setLayout(-1, -2); setGravity(Gravity.BOTTOM); setDimAmount(0.65f) }
     }
     private fun downloadDetailedPreview() {
         if (busy.get()) return
@@ -484,11 +518,12 @@ class MainActivity : Activity() {
             renderPreview()
             return
         }
-        val dialog = PhotoPreviewDialog(this, ::downloadDetailedPreview,
+        val dialog = PhotoPreviewDialog(this, ::confirmOriginalPreview,
             { showPreview(previewIndex - 1) }, { showPreview(previewIndex + 1) }, {
                 val obj = photos[previewIndex]; preview?.dismiss(); requestImport(listOf(obj))
             }, { toggle(photos[previewIndex]); preview?.dismiss() })
         preview = dialog
+        dialog.setOnDismissListener { originalDialog?.dismiss(); previewGeneration++ }
         previewImage = dialog.image; previewStrip = dialog.strip; previewName = dialog.name
         previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
         previewPrevious = dialog.previous; previewNext = dialog.next
@@ -500,9 +535,8 @@ class MainActivity : Activity() {
         val obj = photos[previewIndex]
         val generation = ++previewGeneration
         previewQuality.text = "快速缩略预览 · 正在检查本地原图"
-        previewHigh.visibility = View.VISIBLE
-        previewHigh.text = "查看原图（${"%.1f".format(obj.size / 1048576.0)} MB）"
-        previewHigh.isEnabled = !busy.get() && client != null
+        previewChecking = true; previewOriginalAvailable = false
+        updateOriginalAction()
         previewImage.showPhoto(thumbnail(obj.handle), detailed = false)
         previewImage.contentDescription = obj.filename
         previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
@@ -574,7 +608,7 @@ class MainActivity : Activity() {
         download.isEnabled = !value && client != null && selected.isNotEmpty()
         more.alpha = if (more.isEnabled) 1f else 0.4f
         download.alpha = if (download.isEnabled) 1f else 0.4f
-        if (::previewHigh.isInitialized) previewHigh.isEnabled = !value && client != null
+        if (::previewHigh.isInitialized) updateOriginalAction()
         if (::previewImport.isInitialized) previewImport.isEnabled = !value && client != null
         if (::previewSelect.isInitialized) previewSelect.isEnabled = !value
         grid.editable = !value
@@ -687,6 +721,7 @@ class MainActivity : Activity() {
         stopped = true
         preview?.dismiss()
         issueDialog?.dismiss()
+        originalDialog?.dismiss()
         runtime.detach(runtimeListener)
         previewGeneration++
         imageWorker.shutdownNow()

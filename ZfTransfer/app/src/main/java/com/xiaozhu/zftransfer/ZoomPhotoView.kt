@@ -1,5 +1,7 @@
 package com.xiaozhu.zftransfer
 
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
@@ -15,6 +17,7 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
     private val geometry = PhotoZoomState()
     private val transform = Matrix()
     private var zoomEnabled = false
+    private var zoomAnimation: ValueAnimator? = null
     private var pointer = -1
     private var lastX = 0f
     private var lastY = 0f
@@ -28,12 +31,13 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean { performClick(); return true }
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            geometry.doubleTap(e.x - paddingLeft, e.y - paddingTop)
-            applyTransform(); return true
+            animateDoubleTap(e.x - paddingLeft, e.y - paddingTop)
+            return true
         }
     })
     private val pinch = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            cancelZoomAnimation()
             focusX = detector.focusX - paddingLeft; focusY = detector.focusY - paddingTop
             return true
         }
@@ -49,6 +53,7 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
     init { scaleType = ScaleType.MATRIX }
 
     fun showPhoto(bitmap: Bitmap?, detailed: Boolean) {
+        cancelZoomAnimation()
         // A pending tap from the old photo must never zoom the next photo.
         val cancel = MotionEvent.obtain(0, 0, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
         taps.onTouchEvent(cancel); pinch.onTouchEvent(cancel); cancel.recycle()
@@ -62,11 +67,31 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
         super.onSizeChanged(w, h, oldw, oldh); fit()
     }
     private fun fit() {
+        cancelZoomAnimation()
         val image = drawable
         geometry.fit((width - paddingLeft - paddingRight).toFloat(), (height - paddingTop - paddingBottom).toFloat(),
             image?.intrinsicWidth?.toFloat() ?: 0f, image?.intrinsicHeight?.toFloat() ?: 0f)
         applyTransform()
     }
+    private fun cancelZoomAnimation() { zoomAnimation?.cancel(); zoomAnimation = null }
+    private fun animateDoubleTap(x: Float, y: Float) {
+        cancelZoomAnimation()
+        val start = geometry.snapshot()
+        geometry.doubleTap(x, y)
+        val target = geometry.snapshot()
+        if (!ValueAnimator.areAnimatorsEnabled()) { applyTransform(); return }
+        geometry.restore(start)
+        zoomAnimation = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 280
+            interpolator = DecelerateInterpolator(1.5f)
+            addUpdateListener {
+                geometry.restore(start.towards(target, it.animatedValue as Float))
+                applyTransform()
+            }
+            start()
+        }
+    }
+    override fun onDetachedFromWindow() { cancelZoomAnimation(); super.onDetachedFromWindow() }
     private fun applyTransform() {
         val scale = geometry.baseScale * geometry.zoom
         transform.setValues(floatArrayOf(scale, 0f, geometry.x, 0f, scale, geometry.y, 0f, 0f, 1f))
@@ -75,6 +100,7 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!zoomEnabled || drawable == null) return super.onTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) cancelZoomAnimation()
         pinch.onTouchEvent(event)
         taps.onTouchEvent(event)
         when (event.actionMasked) {
@@ -88,7 +114,7 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
                 if (index >= 0) {
                     val x = event.getX(index); val y = event.getY(index)
                     if (abs(x - downX) > slop || abs(y - downY) > slop) dragging = true
-                    if (dragging && geometry.zoom > 1f) { geometry.pan(x - lastX, y - lastY); applyTransform() }
+                    if (dragging) { cancelZoomAnimation(); if (geometry.zoom > 1f) { geometry.pan(x - lastX, y - lastY); applyTransform() } }
                     lastX = x; lastY = y
                 }
             }
@@ -102,6 +128,7 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
                 } else pointer = -1
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (event.actionMasked == MotionEvent.ACTION_CANCEL) cancelZoomAnimation()
                 pointer = -1; dragging = false
                 parent?.requestDisallowInterceptTouchEvent(false)
             }
