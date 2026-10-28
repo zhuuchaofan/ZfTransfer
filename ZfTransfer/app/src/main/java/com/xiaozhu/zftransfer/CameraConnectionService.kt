@@ -40,7 +40,7 @@ class CameraConnectionService : Service() {
         val stop = PendingIntent.getService(this, 1, Intent(this, CameraConnectionService::class.java).setAction(STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val title = when {
             runtime.userStopped -> "相机连接已断开"
-            runtime.busy.get() -> "正在与相机通信"
+            runtime.taskState.running -> "正在与相机通信"
             runtime.connectionReady -> "${runtime.cameraName} · 保持连接中"
             else -> "等待相机连接"
         }
@@ -50,7 +50,7 @@ class CameraConnectionService : Service() {
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .addAction(Notification.Action.Builder(null, "断开", stop).build())
-            .apply { if (runtime.busy.get()) setProgress(100, runtime.progress, runtime.progress == 0) }
+            .apply { if (runtime.taskState.running) setProgress(100, runtime.progress, runtime.progress == 0) }
             .build()
     }
     private fun refresh(force: Boolean = false) {

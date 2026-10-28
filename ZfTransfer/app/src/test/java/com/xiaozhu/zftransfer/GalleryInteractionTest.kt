@@ -378,4 +378,45 @@ class GalleryInteractionTest {
         org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 0, 78, 40))
         org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 400, 78, 0))
     }
+    @org.junit.Test fun taskSnapshotControlsImportAndRetryConsistently() {
+        val idle = TaskState()
+        org.junit.Assert.assertTrue(idle.showRemaining(2))
+        org.junit.Assert.assertFalse(idle.showRemaining(0))
+        org.junit.Assert.assertEquals("再次导入这张原图", idle.previewImportLabel(1, true))
+        val checking = TaskState(UserOperation.IMPORT)
+        org.junit.Assert.assertFalse(checking.showRemaining(2))
+        org.junit.Assert.assertEquals("正在处理…", checking.previewImportLabel(1, false))
+        val downloading = checking.copy(transfer = ImportProgress(1, 42))
+        org.junit.Assert.assertEquals("正在导入 42%", downloading.previewImportLabel(1, false))
+        org.junit.Assert.assertEquals("正在导入其他照片 42%", downloading.previewImportLabel(2, false))
+        org.junit.Assert.assertEquals(0, idle.percentage)
+        org.junit.Assert.assertEquals(42, downloading.percentage)
+    }
+    @org.junit.Test fun pageAdmissionIsSharedAndRecoversAfterUserGesture() {
+        val pages = PageReadGate()
+        org.junit.Assert.assertTrue(pages.request("a", 40, 200, false, true, true))
+        org.junit.Assert.assertFalse(pages.request("a", 40, 200, false, true, true))
+        org.junit.Assert.assertFalse(pages.request("a", 80, 200, true, true, true))
+        org.junit.Assert.assertTrue(pages.request("a", 80, 200, false, true, true))
+        org.junit.Assert.assertTrue(pages.request("a", 80, 200, false, true, false))
+        org.junit.Assert.assertTrue(pages.request("b", 80, 200, false, true, true))
+        org.junit.Assert.assertFalse(pages.request("b", 200, 200, false, true, true))
+        org.junit.Assert.assertFalse(pages.request("b", 120, 200, false, false, true))
+        pages.resetGesture()
+        org.junit.Assert.assertTrue(pages.request("b", 80, 200, false, true, true))
+    }
+    @org.junit.Test fun completionObserversDoNotConsumeEachOthersEvents() {
+        val completions = ImportCompletions()
+        completions.record(1)
+        val firstObserver = completions.since(0)
+        org.junit.Assert.assertEquals(firstObserver, completions.since(0))
+        val cursor = firstObserver.last().sequence
+        completions.record(2)
+        org.junit.Assert.assertEquals(listOf(2L), completions.since(cursor).map { it.handle })
+        org.junit.Assert.assertEquals(listOf(1L,2L), completions.since(0).map { it.handle })
+        completions.beginBatch()
+        completions.record(3)
+        org.junit.Assert.assertEquals(listOf(3L), completions.since(cursor).map { it.handle })
+        org.junit.Assert.assertTrue(completions.since(cursor).last().sequence > cursor)
+    }
 }

@@ -23,13 +23,13 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     private var choose: (Int) -> Unit = {}
     var canReadMore: () -> Boolean = { false }
     var onReadMore: () -> Unit = {}
-    private var lastRequestedCount = -1
+    var onBrowseGesture: () -> Unit = {}
     private var userBrowsing = false
     private var revealing = false
     private var revealPending = false
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            userBrowsing = true; lastRequestedCount = -1
+            userBrowsing = true; onBrowseGesture()
         }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) userBrowsing = false
         return super.dispatchTouchEvent(event)
@@ -57,8 +57,7 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt); render()
         if (userBrowsing && !revealing && l > oldl && canReadMore() &&
-            lastRequestedCount != photos.size && FilmstripWindow.nearEnd(l, width, step, photos.size)) {
-            lastRequestedCount = photos.size
+            FilmstripWindow.nearEnd(l, width, step, photos.size)) {
             onReadMore()
         }
     }
@@ -92,6 +91,7 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
                 content.addView(view, FrameLayout.LayoutParams(dp(72), dp(56)).apply { leftMargin = position * step })
                 view
             }
+            image.setImageBitmap(thumbnail(photos[position].handle))
             image.setBackgroundColor(if (position == selected) 0xfff2c45b.toInt() else Color.TRANSPARENT)
             image.isSelected = position == selected
         }

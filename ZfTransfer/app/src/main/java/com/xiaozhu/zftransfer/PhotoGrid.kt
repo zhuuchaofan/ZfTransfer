@@ -11,7 +11,7 @@ class PhotoGrid(context: Context) : GridView(context) {
     var canReadMore = false
     var onReadMore: () -> Unit = {}
     private var scrolling = false
-    private var lastRequestedCount = -1
+    var onBrowseGesture: () -> Unit = {}
     init {
         setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {
@@ -25,8 +25,7 @@ class PhotoGrid(context: Context) : GridView(context) {
     }
     private fun maybeReadMore(first: Int, visible: Int, total: Int) {
         if (!scrolling || dragging || !editable || !canReadMore || total == 0 || visible == 0) return
-        if (first + visible < total - 6 || lastRequestedCount == total) return
-        lastRequestedCount = total
+        if (first + visible < total - 6) return
         onReadMore()
     }
     var editable = true
@@ -76,7 +75,7 @@ class PhotoGrid(context: Context) : GridView(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x; downY = event.y
-                lastRequestedCount = -1
+                onBrowseGesture()
                 if (editable) postDelayed(startDrag, ViewConfiguration.getLongPressTimeout().toLong())
             }
             MotionEvent.ACTION_MOVE -> {

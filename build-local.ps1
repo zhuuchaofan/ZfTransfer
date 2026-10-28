@@ -28,7 +28,7 @@ Check-Step
 $manifest = Get-Content "$project\app\src\main\AndroidManifest.xml" -Raw
 $manifest = $manifest.Replace('<manifest ', '<manifest package="com.xiaozhu.zftransfer" ')
 [IO.File]::WriteAllText("$out\AndroidManifest.xml", $manifest, [Text.UTF8Encoding]::new($false))
-& "$tools\aapt2.exe" link -o "$out\unsigned.apk" -I $android --manifest "$out\AndroidManifest.xml" --min-sdk-version 29 --target-sdk-version 36 --version-code 16 --version-name '0.5.6-test' -A "$project\app\src\main\assets" "$out\resources.zip"
+& "$tools\aapt2.exe" link -o "$out\unsigned.apk" -I $android --manifest "$out\AndroidManifest.xml" --min-sdk-version 29 --target-sdk-version 36 --version-code 17 --version-name '0.5.7-test' -A "$project\app\src\main\assets" "$out\resources.zip"
 Check-Step
 & $java -cp "$Studio\plugins\android\lib\r8.jar" com.android.tools.r8.D8 --lib $android --min-api 29 --output "$out\dex" "$out\classes.jar" "$kotlin\lib\kotlin-stdlib.jar" "$kotlin\lib\annotations-13.0.jar"
 Check-Step
@@ -36,11 +36,11 @@ Check-Step
 Check-Step
 & "$tools\zipalign.exe" -f -p 4 "$out\unsigned.apk" "$out\aligned.apk"
 Check-Step
-& "$tools\apksigner.bat" sign --ks "$project\test-keystore.jks" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$PSScriptRoot\ZfTransfer-0.5.6-debug.apk" "$out\aligned.apk"
+& "$tools\apksigner.bat" sign --ks "$project\test-keystore.jks" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" "$out\aligned.apk"
 Check-Step
-& "$tools\apksigner.bat" verify --verbose --print-certs "$PSScriptRoot\ZfTransfer-0.5.6-debug.apk" | Tee-Object "$out\signature.txt"
+& "$tools\apksigner.bat" verify --verbose --print-certs "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" | Tee-Object "$out\signature.txt"
 Check-Step
-& "$tools\aapt2.exe" dump badging "$PSScriptRoot\ZfTransfer-0.5.6-debug.apk" | Tee-Object "$out\badging.txt"
+& "$tools\aapt2.exe" dump badging "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" | Tee-Object "$out\badging.txt"
 Check-Step
-Get-FileHash "$PSScriptRoot\ZfTransfer-0.5.6-debug.apk" -Algorithm SHA256 | Format-List | Out-File "$out\sha256.txt"
-Write-Host 'Built ZfTransfer-0.5.6-debug.apk. No device testing implied.'
+Get-FileHash "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" -Algorithm SHA256 | Format-List | Out-File "$out\sha256.txt"
+Write-Host 'Built ZfTransfer-0.5.7-debug.apk. No device testing implied.'

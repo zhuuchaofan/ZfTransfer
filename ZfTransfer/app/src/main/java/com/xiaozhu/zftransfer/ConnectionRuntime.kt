@@ -52,9 +52,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
         get() = imports.identity
         set(value) { imports.identity = value }
     @Volatile var cameraName = "Nikon Zf"
-    val photos = mutableListOf<CameraObject>()
-    val imported = mutableSetOf<Long>()
-    val completed = mutableSetOf<Long>()
+    private val galleryPhotos = mutableListOf<CameraObject>()
+    val photos: List<CameraObject> get() = galleryPhotos
+    private val importedHandles = mutableSetOf<Long>()
+    val imported: Set<Long> get() = importedHandles
+    private val completions = ImportCompletions()
+    fun completedSince(cursor: Long) = completions.since(cursor)
+    private val pageReads = PageReadGate()
     val thumbs = object : android.util.LruCache<Long, Bitmap>(16 * 1024 * 1024) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
@@ -62,8 +66,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var handles = emptyList<Long>()
     @Volatile var cursor = 0
     var message = ""
-    var importProgress: Pair<Long, Int>? = null
-    var progress = 0
+    var taskState = TaskState()
+        private set
+    val progress get() = taskState.percentage
     @Volatile var revision = 0L
     private var issue: Pair<UserIssue, Boolean>? = null
     private val listeners = linkedSetOf<() -> Unit>()
@@ -112,7 +117,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     fun stop() {
         userStopped = true; cancelPendingConnect(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
-        session.disconnect(); cameraWifi.close(); progress = 0; revision++
+        session.disconnect(); cameraWifi.close(); revision++
         report("已断开连接。成功导入的照片仍保留，未完成任务可稍后重试。")
         changed()
     }
@@ -189,6 +194,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     fun task(operation: UserOperation = UserOperation.READ_PHOTOS, silentErrors: Boolean = false, onComplete: () -> Unit = {}, action: () -> Unit) {
         if (!busy.compareAndSet(false, true)) return
+        taskState = TaskState(operation)
         changed()
         worker.execute {
             try { action() }
@@ -199,11 +205,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 if (userStopped) report("已停止。已成功导入的照片仍保留，未完成文件不会标记为已导入。")
                 else if (operation == UserOperation.CONNECT && lifetime.desired && preparation.retryQuietly(e)) {
                     ui { issue = null }
-                    report("正在等待相机网络和连接服务就绪，将自动重试。请保持手机连接相机热点。")
+                    report("正在连接相机，请保持手机连接相机 Wi-Fi。")
                 } else presentIssue(UserIssues.from(e, operation), !silentErrors)
             } finally {
-                busy.set(false)
-                ui { if (operation == UserOperation.IMPORT) importProgress = null; revision++; changed(); onComplete() }
+                ui { busy.set(false); taskState = TaskState(); revision++; changed(); onComplete() }
             }
         }
     }
@@ -227,7 +232,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             if (!automatic && profile != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
                 profileAttempted = true; requestWifi(profile, false)
             } else if (!automatic) {
-                presentIssue(UserIssue("手机尚未连接相机 Wi-Fi", "请在手机 Wi-Fi 设置中连接相机屏幕显示的热点，再返回应用。相机仅开启热点还不够；无需填写相机 IP。", Recovery.WIFI_SETTINGS))
+                presentIssue(UserIssue("手机尚未连接相机 Wi-Fi", "请在手机 Wi-Fi 设置中连接相机屏幕显示的热点，再返回应用。请保持手机连接该热点。", Recovery.WIFI_SETTINGS))
             }
             return
         }
@@ -235,7 +240,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val wait = preparation.waitMillis(selectedEndpoint.network.networkHandle, selectedEndpoint.address, now())
         cancelPendingConnect()
         if (wait > 0) {
-            report("已识别相机 Wi-Fi，正在等待网络地址稳定…")
+            report("已识别相机 Wi-Fi，正在连接…")
             pendingNetwork = selectedEndpoint.network
             pendingConnect = Runnable {
                 pendingConnect = null; pendingNetwork = null
@@ -246,7 +251,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         }
         cacheDir.listFiles()?.filter { it.name.startsWith("thumb_") && it.name.endsWith(".jpg") }?.forEach { it.delete() }
         imageSession = java.util.UUID.randomUUID().toString()
-        photos.clear(); thumbs.evictAll(); imported.clear(); completed.clear(); revision++; changed()
+        galleryPhotos.clear(); thumbs.evictAll(); importedHandles.clear(); completions.beginBatch(); revision++; changed()
         task(operation = UserOperation.CONNECT, silentErrors = automatic) {
             check(!userStopped && lifetime.desired) { "已停止连接" }
             session.disconnect()
@@ -256,7 +261,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             val address = candidate.address
             sessionNetwork = network
             log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
-            report("正在连接 $address …")
+            report("正在连接相机…")
             val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
                 zfMode = true, log = ::log)
             client = c
@@ -284,15 +289,18 @@ class ConnectionRuntime(private val context: android.content.Context) {
             // Zf may advertise a partial operation table: exercise read operations directly.
             handles = c.listObjectHandles().asReversed()
             cursor = 0
-            report("已连接 ${info.displayName}，共 ${handles.size} 个对象，正在读取照片…")
+            report("已连接 ${info.displayName}，正在读取照片…")
             lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
             loadPage(c)
         }
     }
-    fun readPage() { task { loadPage(client ?: error("请先连接相机")) } }
+    fun beginBrowseGesture() = pageReads.resetGesture()
+    fun readPage(automatic: Boolean = false) {
+        if (!pageReads.request(imageSession, cursor, handles.size, busy.get(), client != null, automatic)) return
+        task { loadPage(client ?: error("请先连接相机")) }
+    }
     private fun loadPage(c: PtpIpClient) {
         val pageSession = imageSession
-        var foundPhotos = 0
         val end = minOf(cursor + 40, handles.size)
         while (cursor < end) {
             check(client === c) { "已停止读取" }
@@ -321,17 +329,16 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 val exists = savedExists(obj)
                 ui {
                     if (pageSession != imageSession) return@ui
-                    photos.add(obj)
+                    galleryPhotos.add(obj)
                     if (bitmap != null) thumbs.put(obj.handle, bitmap)
-                    if (exists) imported.add(obj.handle)
+                    if (exists) importedHandles.add(obj.handle)
                     revision++; changed()
                 }
 
-                foundPhotos++
             }
-            report("已读取 $cursor / ${handles.size} 个对象，本批找到 $foundPhotos 张 JPEG")
+            report("正在读取照片…")
         }
-        report("已读取 $cursor / ${handles.size} 个对象。勾选 JPEG 下载原图${if (cursor < handles.size) "，或继续读取下一批。" else "。"}")
+        ui { message = "已加载 ${photos.size} 张照片${if (cursor < handles.size) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
     }
     val mediumPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), 48L * 1024 * 1024) }
     fun requestMediumPreview(photo: CameraObject, key: String, current: () -> Boolean, ready: (java.io.File?) -> Unit) {
@@ -367,22 +374,49 @@ class ConnectionRuntime(private val context: android.content.Context) {
             ui { if (current()) ready(completed) }
         }
     }
+    /** Evidence ownership stays here; screens never rewrite the shared imported set. */
+    fun refreshImportEvidence() {
+        if (busy.get()) return
+        val snapshot = photos.toList()
+        val identity = cameraIdentity
+        val session = imageSession
+        worker.execute {
+            val verified = snapshot.filter { savedExists(it) }.map { it.handle }.toSet()
+            ui {
+                if (!busy.get() && identity == cameraIdentity && session == imageSession) {
+                    importedHandles.removeAll(snapshot.map { it.handle }.toSet()); importedHandles.addAll(verified); revision++; changed()
+                }
+            }
+        }
+    }
+    fun checkImported(items: List<CameraObject>, ready: (Set<Long>) -> Unit) {
+        val session = imageSession
+        var duplicates: Set<Long>? = null
+        task(operation = UserOperation.IMPORT, onComplete = {
+            val checked = duplicates
+            if (checked != null && client != null && session == imageSession) {
+                items.forEach { if (it.handle in checked) importedHandles.add(it.handle) else importedHandles.remove(it.handle) }
+                revision++; changed()
+                ready(checked)
+            }
+        }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet() }
+    }
     fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
         if (items.isEmpty() || busy.get()) return
-        completed.clear()
+        completions.beginBatch()
         task(operation = UserOperation.IMPORT) {
             val c = client ?: error("请先连接相机")
             val (done, skipped) = transfers.run(c, items, skipExisting, retry,
                 checkActive = { check(client === c) { "已停止传输" } },
                 progress = { index, obj, percentage ->
                     report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
-                    ui { progress = percentage; importProgress = obj.handle to percentage; changed() }
+                    ui { taskState = TaskState(UserOperation.IMPORT, ImportProgress(obj.handle, percentage.coerceIn(0, 100))); changed() }
                 }, completed = { obj, verified -> ui {
-                    completed.add(obj.handle)
-                    if (verified) imported.add(obj.handle) else imported.remove(obj.handle)
+                    completions.record(obj.handle)
+                    if (verified) importedHandles.add(obj.handle) else importedHandles.remove(obj.handle)
                     revision++; changed()
                 } })
-            report("已导入 $done 张，跳过 $skipped 张。保存至系统相册 Pictures/ZfTransfer。")
+            report("已导入 $done 张，跳过 $skipped 张。已保存到手机相册。")
         }
     }
 }

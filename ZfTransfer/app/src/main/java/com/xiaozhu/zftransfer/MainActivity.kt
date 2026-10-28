@@ -3,19 +3,13 @@ package com.xiaozhu.zftransfer
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.BitmapFactory
-import android.graphics.ImageDecoder
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.content.res.ColorStateList
 import android.view.Gravity
 import android.view.ViewGroup
 import android.app.Dialog
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.Network
-import android.net.wifi.WifiInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
@@ -24,16 +18,12 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.*
 import io.github.noisetta.nikonpull.ptp.*
-import java.net.Inet4Address
-import java.util.concurrent.Executors
 
 /** Screen observer for the service-owned camera connection. */
 class MainActivity : Activity() {
     private val runtime get() = (application as TransferApplication).runtime
     private val cameraWifi get() = runtime.cameraWifi
     private val autoGate get() = runtime.autoGate
-    private val session get() = runtime.session
-    private val worker get() = runtime.worker
     private val busy get() = runtime.busy
     private val wifiStore by lazy { WifiProfileStore(this) }
     private var pendingProfile: WifiProfile? = null
@@ -44,13 +34,8 @@ class MainActivity : Activity() {
     private var profileAttempted: Boolean
         get() = runtime.profileAttempted
         set(value) { runtime.profileAttempted = value }
-    private val imageWorker = Executors.newSingleThreadExecutor()
-    private val originalPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "original_previews")) }
     private val imageSession get() = runtime.imageSession
-    @Volatile private var previewGeneration = 0L
-    private var client: PtpIpClient?
-        get() = session.client
-        set(value) { session.client = value }
+    private val client get() = runtime.client
     @Volatile private var stopped = false
     private lateinit var status: TextView
     private lateinit var grid: PhotoGrid
@@ -63,26 +48,10 @@ class MainActivity : Activity() {
     private lateinit var emptyHint: TextView
     private val cameraName get() = runtime.cameraName
     private val photos get() = runtime.photos
-    private val thumbs get() = runtime.thumbs
     private val imported get() = runtime.imported
     private var selectionMode = false
     private var range: RangeSelection? = null
-    private var preview: Dialog? = null
     private var issueDialog: Dialog? = null
-    private var previewIndex = 0
-    private lateinit var previewImage: ZoomPhotoView
-    private lateinit var previewName: TextView
-    private lateinit var previewSize: TextView
-    private lateinit var previewQuality: TextView
-    private lateinit var previewHigh: TextView
-    private var previewOriginalAvailable = false
-    private var previewChecking = false
-    private var originalDialog: Dialog? = null
-    private lateinit var previewImport: Button
-    private lateinit var previewStrip: PhotoFilmstrip
-    private lateinit var previewSelect: TextView
-    private lateinit var previewPrevious: TextView
-    private lateinit var previewNext: TextView
     private val yellow = 0xfff2c45b.toInt()
     private val surfaceColor = 0xff101112.toInt()
     private val muted = 0xffa1a4aa.toInt()
@@ -92,7 +61,6 @@ class MainActivity : Activity() {
         override fun getItemId(position: Int) = photos[position].handle
         override fun getView(position: Int, recycled: View?, parent: ViewGroup): View = photoCell(photos[position])
     }
-    private lateinit var host: EditText
     private lateinit var connect: Button
     private lateinit var more: Button
     private lateinit var retryTransfer: Button
@@ -105,34 +73,45 @@ class MainActivity : Activity() {
     private val cursor get() = runtime.cursor
     private val imports get() = runtime.imports
     private val cameraIdentity get() = runtime.cameraIdentity
+    private var completionCursor = 0L
+    private var renderedBusy: Boolean? = null
     private var renderedRevision = -1L
     private var renderedSession = ""
     private val upgraded = mutableSetOf<Long>()
+    private val images: GalleryImageLoader by lazy { GalleryImageLoader(applicationContext, runtime) {
+        if (!stopped) { adapter.notifyDataSetChanged(); previewController.refresh() }
+    } }
+    private val previewController: PhotoPreviewController by lazy { PhotoPreviewController(this, runtime, images,
+        { it in selected }, ::requestImport, ::toggle, ::showNotice) }
+    private fun thumbnail(handle: Long) = images.thumbnail(handle)
     private val runtimeListener: () -> Unit = { renderRuntime() }
     private fun renderRuntime() {
         if (stopped || !::status.isInitialized) return
         status.text = runtime.message
         status.visibility = if (runtime.message.isEmpty()) View.GONE else View.VISIBLE
         progress.progress = runtime.progress
-        setBusy(busy.get())
+        val running = runtime.taskState.running
+        val busyChanged = renderedBusy != running
+        renderedBusy = running
+        setBusy(running)
+        if (busyChanged) adapter.notifyDataSetChanged()
         updateRetryControl()
         if (renderedSession != imageSession) {
             renderedSession = imageSession; selected.clear(); selectionMode = false; upgraded.clear()
-            preview?.dismiss(); previewGeneration++
+            previewController.dismiss()
         }
         if (renderedRevision != runtime.revision) {
             renderedRevision = runtime.revision
-            selected.keys.removeAll(runtime.completed)
-            if (runtime.completed.isNotEmpty() && selected.isEmpty()) selectionMode = false
-            runtime.completed.clear()
-            updateSelection()
-            if (preview?.isShowing == true) {
-                previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
-                previewNext.isEnabled = previewIndex < photos.lastIndex
-                previewNext.alpha = if (previewNext.isEnabled) 1f else 0.3f
+            val completed = runtime.completedSince(completionCursor)
+            selected.keys.removeAll(completed.map { it.handle }.toSet())
+            if (completed.isNotEmpty()) {
+                completionCursor = completed.last().sequence
+                if (selected.isEmpty()) selectionMode = false
             }
+            updateSelection()
+            previewController.refresh()
             photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
-                upgradeGrid(it, duplicateKey(it), imageSession)
+                images.upgradeGrid(it, duplicateKey(it), imageSession)
             }
         }
         if (resumed) {
@@ -150,7 +129,7 @@ class MainActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val screen = GalleryScreen(this, prefs.getString("host", ""), adapter, object : GalleryScreen.Actions {
+        val screen = GalleryScreen(this, adapter, object : GalleryScreen.Actions {
             override fun settings() = showSettings()
             override fun cameraStatus() { if (client == null && !busy.get()) connectCamera() else showSettings() }
             override fun connect() = connectCamera()
@@ -158,7 +137,7 @@ class MainActivity : Activity() {
                 selectionMode = true; photos.forEach { selected[it.handle] = it }; updateSelection()
             } }
             override fun cancelSelection() { if (!busy.get()) { selected.clear(); selectionMode = false; updateSelection() } }
-            override fun preview(index: Int) { if (!busy.get()) showPreview(index) }
+            override fun preview(index: Int) { if (!busy.get()) previewController.show(index) }
             override fun rangeStart(index: Int) {
                 selectionMode = true
                 range = RangeSelection(photos.indices.filter { photos[it].handle in selected }.toSet(), index)
@@ -176,6 +155,8 @@ class MainActivity : Activity() {
         })
         status = screen.status
         grid = screen.grid
+        grid.onReadMore = { runtime.readPage(automatic = true) }
+        grid.onBrowseGesture = runtime::beginBrowseGesture
         selectionLabel = screen.selectionLabel
         cameraLabel = screen.cameraLabel
         selectAll = screen.selectAll
@@ -183,7 +164,6 @@ class MainActivity : Activity() {
         footer = screen.footer
         emptyTitle = screen.emptyTitle
         emptyHint = screen.emptyHint
-        host = screen.host
         connect = screen.connect
         more = screen.more
         download = screen.download
@@ -194,10 +174,9 @@ class MainActivity : Activity() {
         runtime.attach(runtimeListener)
         runtime.watch()
         renderRuntime()
-        log("ZfTransfer 0.5.4; Android ${android.os.Build.VERSION.RELEASE}")
+        log("ZfTransfer ${packageManager.getPackageInfo(packageName, 0).versionName}; Android ${android.os.Build.VERSION.RELEASE}")
     }
 
-    private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
     private fun textAction(text: String, action: () -> Unit) = label(text, 14f).apply {
         setTextColor(yellow); gravity = Gravity.CENTER
         setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -218,67 +197,29 @@ class MainActivity : Activity() {
     }
     private fun showSettings() {
         val automatic = prefs.getBoolean("auto_connect", true)
-        AlertDialog.Builder(this).setTitle("相机与应用").setItems(arrayOf("相机 Wi-Fi 配置", "${if (automatic) "关闭" else "开启"}自动连接", "相机地址", "Wi-Fi 设置", "停止 / 断开", "分享日志", "关于", "忘记相机 Wi-Fi", "后台连接设置", "预览速度测试")) { _, which ->
-            when (which) {
-                0 -> showWifiProfile()
-                1 -> {
-                    prefs.edit().putBoolean("auto_connect", !automatic).apply()
-                    if (!automatic) { userStopped = false; autoGate.reset(); profileAttempted = false; cameraWifi.schedule() }
-                    report(if (automatic) "已关闭自动连接。可手动连接相机。" else "已开启自动连接，正在检测相机 Wi-Fi…")
-                }
-                2 -> showCameraAddress()
-                3 -> startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                4 -> {
-                    runtime.stop()
-                    stopService(Intent(this, CameraConnectionService::class.java))
-                    setBusy(busy.get())
-                }
-                5 -> shareLogs()
-                6 -> showLicense()
-                7 -> AlertDialog.Builder(this).setTitle("忘记相机 Wi-Fi？")
-                    .setMessage("删除本应用加密保存的名称和密码，不删除系统 Wi-Fi 或导入照片。")
-                    .setPositiveButton("忘记") { _, _ -> wifiStore.clear(); profileAttempted = true; pendingProfile = null; report("已忘记本应用保存的相机 Wi-Fi。") }
-                    .setNegativeButton("取消", null).show()
-                8 -> showIssuePanel(UserIssue("保持后台连接", "请在系统应用信息中将省电策略设为「无限制」，并允许通知，以便熄屏后保持连接和随时断开。持续连接会增加手机和相机耗电。相机关机后的无线状态仍取决于相机设置与固件。", Recovery.APP_SETTINGS), false, "打开应用设置")
-                9 -> probePreview()
-            }
-        }.show()
-    }
-    private fun probePreview() {
-        val c = client
-        val photo = photos.getOrNull(previewIndex) ?: photos.firstOrNull()
-        if (c == null || photo == null || busy.get()) {
-            showNotice("请先连接并读取照片", "连接相机并打开需要测试的照片，再从菜单运行预览速度测试。")
-            return
-        }
-        var result = ""
-        task(operation = UserOperation.PREVIEW, onComplete = {
-            if (result.isNotEmpty()) showNotice("预览测试结果", result)
-        }) {
-            check(client === c) { "请先连接相机" }
-            result = PreviewProbe.measure(c, photo, ::log)
-            runtime.report("预览接口测试完成，未导入照片。")
-        }
-    }
-    private fun showCameraAddress() {
-        val draft = EditText(this).apply {
-            setText(host.text); hint = "相机 IPv4 地址（留空自动识别）"
-            inputType = android.text.InputType.TYPE_CLASS_PHONE; setSingleLine(true)
-        }
-        val dialog = AlertDialog.Builder(this).setTitle("相机地址").setView(draft)
-            .setPositiveButton("保存", null).setNegativeButton("取消", null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val address = draft.text.toString().trim()
-                if (address.isNotEmpty() && !CameraAddress.isUsable(address)) {
-                    draft.error = "请输入有效的相机 IPv4 地址，或留空自动识别"
-                } else {
-                    host.setText(address); prefs.edit().putString("host", address).apply()
-                    autoGate.reset(); dialog.dismiss(); cameraWifi.schedule()
-                }
-            }
-        }
-        dialog.show()
+        val choices = listOf<Pair<String, () -> Unit>>(
+            "相机 Wi-Fi 配置" to { showWifiProfile() },
+            "${if (automatic) "关闭" else "开启"}自动连接" to {
+                prefs.edit().putBoolean("auto_connect", !automatic).apply()
+                if (!automatic) { userStopped = false; autoGate.reset(); profileAttempted = false; cameraWifi.schedule() }
+                report(if (automatic) "已关闭自动连接。可手动连接相机。" else "已开启自动连接，正在检测相机 Wi-Fi…")
+            },
+            "Wi-Fi 设置" to { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); Unit },
+            "断开相机" to {
+                runtime.stop(); stopService(Intent(this, CameraConnectionService::class.java)); Unit
+            },
+            "后台连接设置" to {
+                showIssuePanel(UserIssue("保持后台连接", "请在系统应用信息中将省电策略设为「无限制」，并允许通知，以便熄屏后保持连接和随时断开。持续连接会增加手机和相机耗电。相机关机后的无线状态仍取决于相机设置。", Recovery.APP_SETTINGS), "打开应用设置")
+            },
+            "忘记相机 Wi-Fi" to {
+                AlertDialog.Builder(this).setTitle("忘记相机 Wi-Fi？")
+                    .setMessage("删除本应用保存的名称和密码，不删除系统 Wi-Fi 或导入照片。")
+                    .setPositiveButton("忘记") { _, _ -> wifiStore.clear(); profileAttempted = true; pendingProfile = null; report("已忘记保存的相机 Wi-Fi。") }
+                    .setNegativeButton("取消", null).show(); Unit
+            },
+            "关于" to { showLicense() }
+        )
+        AlertDialog.Builder(this).setTitle("相机与应用").setItems(choices.map { it.first }.toTypedArray()) { _, which -> choices[which].second() }.show()
     }
     private fun showWifiProfile() {
         val saved = wifiStore.load()
@@ -296,7 +237,7 @@ class MainActivity : Activity() {
         }
         val remember = CheckBox(this).apply { text = "加密保存，下次打开自动连接"; isChecked = true }
         panel.addView(ssid); panel.addView(password); panel.addView(remember)
-        panel.addView(label("密码仅保存在本机，不写入日志。仅支持相机的 WPA2 热点。", 12f).apply { setTextColor(muted) })
+        panel.addView(label("名称和密码加密保存在本机，用于下次连接相机。", 12f).apply { setTextColor(muted) })
         val dialog = AlertDialog.Builder(this).setTitle("连接相机 Wi-Fi").setView(panel)
             .setPositiveButton("保存并连接", null).setNegativeButton("取消", null).create()
         dialog.setOnShowListener {
@@ -351,146 +292,6 @@ class MainActivity : Activity() {
         if (selected.remove(obj.handle) == null) selected[obj.handle] = obj
         updateSelection()
     }
-    private fun thumbnailFile(handle: Long, session: String = imageSession) = java.io.File(cacheDir, "thumb_${session}_$handle.jpg")
-    private fun previewKey(obj: CameraObject) = duplicateKey(obj) ?: "$imageSession|${obj.storageId}|${obj.handle}|${obj.filename}|${obj.captureDate}|${obj.size}"
-    private fun decodePreview(source: ImageDecoder.Source, maxEdge: Int): Bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-        val scale = minOf(1.0, maxEdge.toDouble() / maxOf(info.size.width, info.size.height))
-        decoder.setTargetSize(maxOf(1, (info.size.width * scale).toInt()), maxOf(1, (info.size.height * scale).toInt()))
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-    }
-    private fun upgradeGrid(obj: CameraObject, recordKey: String?, session: String) {
-        imageWorker.execute {
-            if (imageSession != session || stopped) return@execute
-            val uri = verifiedSavedUri(obj, recordKey) ?: return@execute
-            val bitmap = runCatching { decodePreview(ImageDecoder.createSource(contentResolver, uri), 512) }.getOrNull() ?: return@execute
-            if (imageSession != session || stopped) { bitmap.recycle(); return@execute }
-            runCatching { thumbnailFile(obj.handle, session).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it) } }
-            ui { if (imageSession == session) { thumbs.put(obj.handle, bitmap); adapter.notifyDataSetChanged() } }
-        }
-    }
-    private fun loadDetailedPreview(obj: CameraObject, generation: Long) {
-        val key = previewKey(obj)
-        val recordKey = duplicateKey(obj)
-        val session = imageSession
-        imageWorker.execute {
-            if (generation != previewGeneration || stopped) return@execute
-            val uri = verifiedSavedUri(obj, recordKey)
-            val cached = if (uri == null) originalPreviews.find(key, obj.size) else null
-            val medium = if (uri == null && cached == null) runtime.mediumPreviews.findCompleted(key) else null
-            val source = when {
-                uri != null -> ImageDecoder.createSource(contentResolver, uri)
-                cached != null -> ImageDecoder.createSource(cached)
-                medium != null -> ImageDecoder.createSource(medium)
-                else -> null
-            }
-            val bitmap = source?.let { runCatching { decodePreview(it, 2560) }.onFailure { log("Preview decode failed: ${it.javaClass.simpleName}: ${it.message}") }.getOrNull() }
-            if (bitmap == null && medium != null) medium.delete()
-            val gridBitmap = bitmap?.takeIf { maxOf(it.width, it.height) > 512 }?.let {
-                val scale = 512.0 / maxOf(it.width, it.height)
-                Bitmap.createScaledBitmap(it, maxOf(1, (it.width * scale).toInt()), maxOf(1, (it.height * scale).toInt()), true)
-            }
-            if (gridBitmap != null && imageSession == session) runCatching {
-                thumbnailFile(obj.handle, session).outputStream().use { gridBitmap.compress(Bitmap.CompressFormat.JPEG, 94, it) }
-            }
-            ui {
-                if (gridBitmap != null) {
-                    if (imageSession == session) { thumbs.put(obj.handle, gridBitmap); adapter.notifyDataSetChanged() }
-                    else gridBitmap.recycle()
-                }
-                if (generation != previewGeneration || preview?.isShowing != true) { bitmap?.recycle(); return@ui }
-                if (bitmap != null) {
-                    previewImage.showPhoto(bitmap, detailed = true)
-                    previewQuality.text = when {
-                        uri != null -> "本地原图预览 · 双击或双指缩放"
-                        cached != null -> "原图临时预览 · 双击或双指缩放"
-                        else -> "清晰预览 ${bitmap.width} × ${bitmap.height} · 双击或双指缩放"
-                    }
-                    previewChecking = false
-                    previewOriginalAvailable = uri != null || cached != null
-                    updateOriginalAction()
-                } else {
-                    previewQuality.text = "正在加载清晰预览…"
-                    previewChecking = false
-                    previewOriginalAvailable = false
-                    updateOriginalAction()
-                    runtime.requestMediumPreview(obj, key,
-                        { generation == previewGeneration && !stopped && session == imageSession },
-                        { file ->
-                            if (preview?.isShowing == true) {
-                                if (file != null) loadDetailedPreview(obj, generation)
-                                else previewQuality.text = "清晰预览暂不可用，可按需查看原图"
-                            }
-                        })
-                }
-            }
-        }
-    }
-    private fun updateOriginalAction() {
-        previewHigh.text = "原图"
-        previewHigh.visibility = View.VISIBLE
-        previewHigh.isEnabled = !previewChecking && !previewOriginalAvailable && !busy.get() && client != null
-        previewHigh.alpha = if (previewHigh.isEnabled) 1f else 0.4f
-        previewHigh.contentDescription = if (previewOriginalAvailable) "当前为原图预览" else "查看原图"
-    }
-    private fun confirmOriginalPreview() {
-        val obj = photos.getOrNull(previewIndex) ?: return
-        if (!previewHigh.isEnabled) return
-        val generation = previewGeneration
-        val size = "%.1f".format(obj.size / 1048576.0)
-        originalDialog?.dismiss()
-        val dialog = Dialog(this)
-        originalDialog = dialog
-        val sheet = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(24))
-            background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(20).toFloat() }
-        }
-        sheet.addView(label("查看原图", 21f))
-        sheet.addView(label("需要从相机加载约 $size MB，用于查看细节。此次加载只作临时预览，不会导入相册。", 14f).apply { setTextColor(muted) })
-        sheet.addView(button("加载原图（$size MB）") {
-            dialog.dismiss()
-            if (generation == previewGeneration && !previewOriginalAvailable && !busy.get()) downloadDetailedPreview()
-        }.apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surfaceColor) }, LinearLayout.LayoutParams(-1, dp(52)))
-        sheet.addView(textAction("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(-1, dp(48)))
-        dialog.setContentView(sheet); dialog.show()
-        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); setLayout(-1, -2); setGravity(Gravity.BOTTOM); setDimAmount(0.65f) }
-    }
-    private fun downloadDetailedPreview() {
-        if (busy.get()) return
-        val obj = photos.getOrNull(previewIndex) ?: return
-        val c = client ?: return
-        if (obj.size !in 1..originalPreviews.budget) {
-            showNotice("照片较大", "为避免占用过多临时空间，请先导入原图，再查看清晰预览。"); return
-        }
-        val key = previewKey(obj)
-        val generation = previewGeneration
-        var complete = false
-        task(operation = UserOperation.PREVIEW, onComplete = {
-            if (preview?.isShowing == true && photos.getOrNull(previewIndex)?.let { previewKey(it) } == key) {
-                if (complete) renderPreview() else previewQuality.text = "高清加载未完成，可重连后重试"
-            }
-        }) {
-            originalPreviews.store(key, obj.size) { output ->
-                check(client === c) { "已停止高清预览" }
-                var lastPercent = -1
-                c.downloadObject(obj.handle, output) { transfer ->
-                    val percent = (transfer.bytesTransferred * 100 / obj.size).coerceIn(0, 100).toInt()
-                    if (percent != lastPercent) {
-                        lastPercent = percent
-                        ui { if (generation == previewGeneration && preview?.isShowing == true) previewQuality.text = "正在加载高清预览 $percent% · 不写入相册" }
-                    }
-                }
-            }
-            complete = true
-            report("高清预览已缓存，未写入相册，也未标记为已导入。")
-        }
-    }
-    private fun thumbnail(handle: Long): Bitmap? {
-        thumbs.get(handle)?.let { return it }
-        val file = thumbnailFile(handle)
-        val bitmap = if (file.exists()) runCatching { decodePreview(ImageDecoder.createSource(file), 1024) }.getOrNull() else null
-        if (bitmap != null) thumbs.put(handle, bitmap)
-        return bitmap
-    }
     override fun onResume() {
         super.onResume()
         resumed = true
@@ -500,16 +301,7 @@ class MainActivity : Activity() {
         renderRuntime()
         cameraWifi.schedule()
         if (!::grid.isInitialized || busy.get()) return
-        val snapshot = photos.toList()
-        val identity = cameraIdentity
-        worker.execute {
-            val verified = snapshot.filter { savedExists(it) }.map { it.handle }.toSet()
-            ui {
-                if (!busy.get() && identity == cameraIdentity) {
-                    imported.clear(); imported.addAll(verified); adapter.notifyDataSetChanged(); updatePreviewActions()
-                }
-            }
-        }
+        runtime.refreshImportEvidence()
     }
     override fun onPause() { resumed = false; runtime.foreground = false; super.onPause() }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -519,64 +311,6 @@ class MainActivity : Activity() {
     private val cells by lazy { GalleryPhotoCell(this) }
     private fun photoCell(obj: CameraObject): View = cells.create(obj, thumbnail(obj.handle),
         obj.handle in selected, obj.handle in imported, !busy.get(), grid.height) { toggle(obj) }
-    private fun showPreview(index: Int) {
-        if (index !in photos.indices) return
-        previewIndex = index
-        if (preview?.isShowing == true) {
-            renderPreview()
-            return
-        }
-        val dialog = PhotoPreviewDialog(this, ::confirmOriginalPreview,
-            { showPreview(previewIndex - 1) }, { showPreview(previewIndex + 1) }, {
-                val obj = photos[previewIndex]; requestImport(listOf(obj))
-            }, { toggle(photos[previewIndex]) })
-        preview = dialog
-        dialog.setOnDismissListener { originalDialog?.dismiss(); previewGeneration++ }
-        previewImage = dialog.image; previewStrip = dialog.strip; previewName = dialog.name
-        previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
-        previewPrevious = dialog.previous; previewNext = dialog.next
-        previewImport = dialog.import; previewSelect = dialog.select
-        previewStrip.canReadMore = { !busy.get() && client != null && cursor < handles.size }
-        previewStrip.onReadMore = ::readPage
-        renderPreview()
-        dialog.show()
-        updatePreviewActions()
-    }
-    private fun updatePreviewActions() {
-        if (preview?.isShowing != true) return
-        val obj = photos.getOrNull(previewIndex) ?: return
-        previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
-        previewSelect.text = if (obj.handle in selected) "移出选择" else "加入选择"
-        val transfer = runtime.importProgress
-        previewImport.text = when {
-            busy.get() && transfer?.first == obj.handle -> "正在导入 ${transfer.second.coerceIn(0, 100)}%"
-            busy.get() && transfer != null -> "正在导入其他照片 ${transfer.second.coerceIn(0, 100)}%"
-            busy.get() -> "正在处理…"
-            obj.handle in imported -> "再次导入这张原图"
-            else -> "导入这张原图"
-        }
-        previewImport.isEnabled = !busy.get() && client != null
-        previewSelect.isEnabled = !busy.get()
-    }
-    private fun renderPreview() {
-        val obj = photos[previewIndex]
-        val generation = ++previewGeneration
-        previewQuality.text = "快速缩略预览 · 正在检查本地原图"
-        previewChecking = true; previewOriginalAvailable = false
-        updateOriginalAction()
-        previewImage.showPhoto(thumbnail(obj.handle), detailed = false)
-        previewImage.contentDescription = obj.filename
-        previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
-        previewSize.text = "JPEG · ${"%.1f".format(obj.size / 1048576.0)} MB"
-        loadDetailedPreview(obj, generation)
-        previewSelect.text = if (obj.handle in selected) "移出选择" else "加入选择"
-        previewPrevious.isEnabled = previewIndex > 0
-        previewNext.isEnabled = previewIndex < photos.lastIndex
-        previewPrevious.alpha = if (previewPrevious.isEnabled) 1f else 0.3f
-        previewNext.alpha = if (previewNext.isEnabled) 1f else 0.3f
-        previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
-        updatePreviewActions()
-    }
     private fun ui(action: () -> Unit) { runOnUiThread { if (!isDestroyed && !stopped) action() } }
     private fun log(message: String) = runtime.log(message)
     private fun presentIssue(issue: UserIssue, interactive: Boolean = true) { ui {
@@ -584,8 +318,8 @@ class MainActivity : Activity() {
         status.setTextColor(yellow)
         if (interactive) showIssuePanel(issue)
     } }
-    private fun showNotice(title: String, message: String) = showIssuePanel(UserIssue(title, message, Recovery.NONE), false)
-    private fun showIssuePanel(issue: UserIssue, diagnostics: Boolean = true, primaryLabel: String? = null) {
+    private fun showNotice(title: String, message: String) = showIssuePanel(UserIssue(title, message, Recovery.NONE))
+    private fun showIssuePanel(issue: UserIssue, primaryLabel: String? = null) {
         if (isFinishing || stopped) return
         issueDialog?.dismiss()
         val dialog = Dialog(this)
@@ -616,7 +350,6 @@ class MainActivity : Activity() {
             if (intent != null) runCatching { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 .onFailure { showNotice("请手动打开系统设置", "当前系统无法从应用打开该页面，请手动进入系统设置后重试。") }
         }.apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surfaceColor) }, LinearLayout.LayoutParams(-1, dp(52)))
-        if (diagnostics) sheet.addView(textAction("分享诊断日志") { dialog.dismiss(); shareLogs() }, LinearLayout.LayoutParams(-1, dp(48)))
         if (issue.recovery != Recovery.NONE) sheet.addView(textAction("稍后处理") { dialog.dismiss() }.apply { setTextColor(muted) }, LinearLayout.LayoutParams(-1, dp(48)))
         dialog.setContentView(sheet); dialog.show()
         dialog.window?.apply {
@@ -626,22 +359,15 @@ class MainActivity : Activity() {
         }
     }
     private fun report(message: String) { ui { status.text = message; status.setTextColor(muted); status.visibility = View.VISIBLE } }
-    private fun task(operation: UserOperation = UserOperation.READ_PHOTOS, silentErrors: Boolean = false, onComplete: () -> Unit = {}, action: () -> Unit) {
-        runtime.task(operation, silentErrors, { if (!stopped && !isDestroyed) onComplete() }, action)
-    }
     private fun setBusy(value: Boolean) {
         connect.isEnabled = !value
-        host.isEnabled = !value
         more.isEnabled = !value && client != null && cursor < handles.size
         download.isEnabled = !value && client != null && selected.isNotEmpty()
         more.alpha = if (more.isEnabled) 1f else 0.4f
         download.alpha = if (download.isEnabled) 1f else 0.4f
-        if (::previewHigh.isInitialized) updateOriginalAction()
-        if (::previewImport.isInitialized) previewImport.isEnabled = !value && client != null
-        if (::previewSelect.isInitialized) previewSelect.isEnabled = !value
+        previewController.refreshActions()
         grid.editable = !value
         grid.canReadMore = !value && client != null && cursor < handles.size
-        updatePreviewActions()
         progress.visibility = if (value) View.VISIBLE else View.GONE
         cameraLabel.text = when {
             runtime.connectionReady -> "$cameraName · 已连接"
@@ -654,12 +380,11 @@ class MainActivity : Activity() {
         emptyHint.text = if (client == null) "连接相机 Wi-Fi 后，将自动识别\n也可在应用内设置 Wi-Fi 名和密码" else "仅显示 JPEG 原图；可继续读取下一批"
         updateGalleryControls()
         updateRetryControl()
-        adapter.notifyDataSetChanged()
     }
     private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) = runtime.connectCamera(networkOverride, automatic)
     private fun readPage() = runtime.readPage()
     private fun updateSelection() {
-        updatePreviewActions()
+        previewController.refreshActions()
         download.text = if (selected.isEmpty()) "导入原图" else "导入原图（${selected.size}）"
         download.isEnabled = selected.isNotEmpty() && client != null && !busy.get()
         download.alpha = if (download.isEnabled) 1f else 0.4f
@@ -674,8 +399,6 @@ class MainActivity : Activity() {
         cancelSelection.visibility = if (selectionMode) View.VISIBLE else View.GONE
         more.visibility = if (client != null && cursor < handles.size) View.VISIBLE else View.GONE
     }
-    private fun savedExists(obj: CameraObject): Boolean = verifiedSavedUri(obj) != null
-    private fun verifiedSavedUri(obj: CameraObject, recordKey: String? = duplicateKey(obj)): Uri? = imports.verifiedUri(obj, recordKey)
     private fun requestImport(items: List<CameraObject>) {
         if (busy.get() || client == null || items.isEmpty()) return
         if (transfers.queue.remaining.isNotEmpty()) {
@@ -688,17 +411,12 @@ class MainActivity : Activity() {
         checkDuplicates(items)
     }
     private fun checkDuplicates(items: List<CameraObject>) {
-        var checked = false
-        var duplicates = emptySet<Long>()
-        task(operation = UserOperation.IMPORT, onComplete = {
-            if (checked && client != null) {
-                items.forEach { if (it.handle in duplicates) imported.add(it.handle) else imported.remove(it.handle) }
-                adapter.notifyDataSetChanged()
-                updatePreviewActions()
+        runtime.checkImported(items) { duplicates ->
+            if (!stopped && !isDestroyed) {
                 if (duplicates.isEmpty()) startImport(items, false)
                 else showDuplicateChoices(items, duplicates.size)
             }
-        }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet(); checked = true }
+        }
     }
     private fun showDuplicateChoices(items: List<CameraObject>, duplicateCount: Int) {
         val dialog = Dialog(this)
@@ -731,35 +449,24 @@ class MainActivity : Activity() {
     private fun updateRetryControl() {
         if (!::retryTransfer.isInitialized) return
         val count = transfers.queue.remaining.size
-        retryTransfer.visibility = if (count > 0 && !busy.get()) View.VISIBLE else View.GONE
+        retryTransfer.visibility = if (runtime.taskState.showRemaining(count)) View.VISIBLE else View.GONE
         retryTransfer.text = "继续导入未完成的 $count 张"
         retryTransfer.isEnabled = !busy.get() && client != null
     }
     private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) = runtime.startImport(items, skipExisting, retry)
     private fun duplicateKey(obj: CameraObject): String? = imports.key(obj)
-    private fun shareLogs() {
-        val text = runtime.logText()
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text)
-        }, "分享连接日志"))
-    }
     private fun showLicense() {
         val text = assets.open("LICENSE.txt").bufferedReader().use { it.readText() }
-        AlertDialog.Builder(this).setTitle("Zf 传图 · 开源测试版").setMessage(
-            "本应用无担保。遵循 GPL-3.0，可依许可证修改和分发。\n协议核心改编自 noisetta/Nikon-Pull，Zf 连接参考 jaminxx-aha/ZPill（MIT）。\n完整源码随测试包提供。\n\n$text"
+        AlertDialog.Builder(this).setTitle("关于 Zf 传图").setMessage(
+            "遵循 GPL-3.0 开源许可证。\n基于 noisetta/Nikon-Pull 与 jaminxx-aha/ZPill 构建。\n源代码：github.com/zhuuchaofan/ZfTransfer\n\n$text"
         ).setPositiveButton("关闭", null).show()
     }
     override fun onDestroy() {
         stopped = true
-        preview?.dismiss()
+        previewController.close()
         issueDialog?.dismiss()
-        originalDialog?.dismiss()
         runtime.detach(runtimeListener)
-        previewGeneration++
-        imageWorker.shutdownNow()
+        images.close()
         super.onDestroy()
-    }
-    companion object {
-        private fun validIpv4(value: String): Boolean = CameraAddress.isUsable(value)
     }
 }

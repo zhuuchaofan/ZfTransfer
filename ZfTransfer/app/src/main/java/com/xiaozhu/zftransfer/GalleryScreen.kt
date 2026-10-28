@@ -9,7 +9,7 @@ import android.view.View
 import android.widget.*
 
 /** Builds the gallery. Camera operations and selection policy stay outside the views. */
-class GalleryScreen(private val context: Context, address: String?, photoAdapter: BaseAdapter, private val actions: Actions) {
+class GalleryScreen(private val context: Context, photoAdapter: BaseAdapter, private val actions: Actions) {
     interface Actions {
         fun settings(); fun cameraStatus(); fun connect(); fun selectAll(); fun cancelSelection()
         fun preview(index: Int); fun rangeStart(index: Int); fun rangeMove(index: Int)
@@ -28,7 +28,6 @@ class GalleryScreen(private val context: Context, address: String?, photoAdapter
     val footer: LinearLayout
     val emptyTitle: TextView
     val emptyHint: TextView
-    val host: EditText
     val connect: Button
     val more: Button
     val download: Button
@@ -51,7 +50,7 @@ class GalleryScreen(private val context: Context, address: String?, photoAdapter
         title.addView(ImageButton(context).apply {
             setImageResource(resource("ic_more", "drawable"))
             setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "相机设置与日志"
+            contentDescription = "相机与应用设置"
             setOnClickListener { actions.settings() }
         }, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(title)
@@ -68,12 +67,6 @@ class GalleryScreen(private val context: Context, address: String?, photoAdapter
         cameraLabel = label("Nikon Zf · 尚未连接", 14f).apply { setTextColor(muted); setPadding(dp(12), 0, 0, 0) }
         cameraRow.addView(cameraLabel)
         root.addView(cameraRow)
-        host = EditText(context).apply {
-            setText(address); setSingleLine(true)
-            hint = "相机 IPv4 地址（留空自动识别）"
-            setTextColor(Color.WHITE); setHintTextColor(muted)
-            inputType = android.text.InputType.TYPE_CLASS_PHONE
-        }
         connect = button("连接相机") { actions.connect() }.apply {
             backgroundTintList = ColorStateList.valueOf(yellow)
             setTextColor(surfaceColor); textSize = 16f
