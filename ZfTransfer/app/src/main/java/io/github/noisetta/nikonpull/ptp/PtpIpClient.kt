@@ -158,6 +158,13 @@ class PtpIpClient(
         maximumSize = MAX_THUMBNAIL_BYTES,
     )
 
+    /** Read-only Nikon medium preview candidates. Actual support depends on camera/mode. */
+    fun getNikonPreview(handle: Long, fullHd: Boolean): ByteArray = executeForBytes(
+        operationCode = if (fullHd) 0x920f else 0x90c4,
+        parameters = listOf(handle),
+        maximumSize = 16 * 1024 * 1024,
+    )
+
     fun getDeviceInfo(): CameraDeviceInfo = PtpDataParser.parseDeviceInfo(
         executeForBytes(OP_GET_DEVICE_INFO),
         responderGuid,

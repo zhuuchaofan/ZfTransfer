@@ -18,6 +18,11 @@ class OriginalPreviewCache(private val root: File, val budget: Long = 192L * 102
         size > 0 && it.isFile && it.length() == size
     }?.also { it.setLastModified(System.currentTimeMillis()) }
 
+    /** Variable-size medium previews; only atomically published files are visible. */
+    @Synchronized fun findCompleted(key: String): File? = file(key).takeIf {
+        it.isFile && it.length() in 1..budget
+    }?.also { it.setLastModified(System.currentTimeMillis()) }
+
     @Synchronized fun store(key: String, size: Long, write: (OutputStream) -> Unit): File {
         require(size in 1..budget) { "照片过大，请先导入原图后预览" }
         check(root.isDirectory || root.mkdirs()) { "无法创建预览缓存" }

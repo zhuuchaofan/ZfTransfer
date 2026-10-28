@@ -25,7 +25,7 @@ object UserIssues {
             "无法创建相册" in detail || "无法写入相册" in detail || "相册文件发布失败" in detail -> UserIssue("无法保存到手机相册", "请检查手机存储空间和系统相册是否可用。已经成功保存的照片仍保留，可通过日志排查本次保存失败。", Recovery.STORAGE_SETTINGS)
             "预览缓存" in detail -> UserIssue("高清预览暂时无法保存", "请检查手机剩余空间后重新加载。临时预览不会写入相册，也不会改变已导入记录。", Recovery.STORAGE_SETTINGS)
             chain.any { it is SocketTimeoutException } || "timed out" in detail || "timeout" in detail -> UserIssue("等待相机响应超时", "请保持相机开机并连接相机 Wi-Fi，然后重试。传输失败前已经成功导入的照片仍保留。", Recovery.WIFI_SETTINGS)
-            chain.any { it is ConnectException } || "econnrefused" in detail || "connection refused" in detail -> UserIssue("相机尚未准备好", "请在相机中开启「连接至智能设备」的 Wi-Fi，退出其他占用相机的应用，再重新连接。", Recovery.WIFI_SETTINGS)
+            chain.any { it is ConnectException } || "econnrefused" in detail || "connection refused" in detail -> UserIssue("未找到相机服务", "当前网络未接受相机连接。请确认手机连接的是相机热点；若已确认，可重新开启相机 Wi-Fi，并退出其他占用相机的应用后再试。", Recovery.WIFI_SETTINGS)
             "wi-fi 尚未就绪" in detail || "请先连接相机" in detail || "not connected to the camera" in detail -> UserIssue("还没有连接到相机", "请先连接相机 Wi-Fi，等待手机获取网络地址。返回应用后会自动识别，也可以点击相机状态重试。", Recovery.WIFI_SETTINGS)
             "camera rejected" in detail || "ptp error" in detail || "ptp/ip" in detail -> UserIssue("相机暂时无法完成操作", "请确认相机处于智能设备连接模式，并退出其他连接应用。必要时重新开启相机 Wi-Fi 后再试。", Recovery.WIFI_SETTINGS)
             chain.any { it is SocketException } || "econnaborted" in detail || "disconnected" in detail || "broken pipe" in detail -> UserIssue("相机连接已中断", "请检查手机是否仍连接相机热点。重新连接后，可继续选择未完成的照片；已成功导入的照片仍保留。", Recovery.WIFI_SETTINGS)

@@ -9,8 +9,8 @@ android {
         applicationId = "com.xiaozhu.zftransfer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.5.0-test"
+        versionCode = 12
+        versionName = "0.5.2-test"
     }
     signingConfigs {
         getByName("debug") {

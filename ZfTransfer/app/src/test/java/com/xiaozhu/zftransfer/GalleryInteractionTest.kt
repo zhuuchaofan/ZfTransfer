@@ -5,6 +5,38 @@ import org.junit.Test
 
 class GalleryInteractionTest {
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun mediumPreviewAcceptsPhoneSizedImagesAndRejectsThumbnailsOrOriginals() {
+        assertTrue(MediumPreviewPolicy.usable(1620,1080,634805))
+        assertTrue(MediumPreviewPolicy.usable(1080,1620,634805))
+        assertTrue(MediumPreviewPolicy.usable(640,424,108912))
+        assertFalse(MediumPreviewPolicy.usable(160,120,10685))
+        assertFalse(MediumPreviewPolicy.usable(6048,4032,11000000))
+        assertFalse(MediumPreviewPolicy.usable(-1,-1,0))
+    }
+    @Test fun normalHomeWifiIsNotProbedByConnectButton() {
+        val home = CameraNetworkHint(1, "192.168.50.2", "HOME", true, false)
+        assertNull(CameraNetworkSelector.select(listOf(home), "", "192.168.1.1"))
+        assertNull(CameraNetworkSelector.select(listOf(home.copy(validated = false)), "", "192.168.1.1"))
+    }
+    @Test fun requestedCameraNetworkWinsOverOtherWifi() {
+        val home = CameraNetworkHint(1, "192.168.50.2", "HOME", true, false)
+        val camera = CameraNetworkHint(2, "192.168.1.1", null, false, true)
+        assertEquals(camera, CameraNetworkSelector.select(listOf(home,camera), "", "192.168.1.1"))
+    }
+    @Test fun manuallyConnectedNikonWifiDoesNotNeedAddressConfiguration() {
+        val camera = CameraNetworkHint(2, "192.168.1.1", "\"NIKON_Z_f_TEST\"", false, false)
+        assertEquals(camera, CameraNetworkSelector.select(listOf(camera), "", "192.168.1.1"))
+        assertEquals(camera.copy(ssid = "CUSTOM"), CameraNetworkSelector.select(listOf(camera.copy(ssid = "CUSTOM")), "", "10.0.0.1", setOf("CUSTOM")))
+    }
+    @Test fun hiddenSsidCanUsePreviouslyVerifiedCameraGateway() {
+        val camera = CameraNetworkHint(2, "192.168.1.1", "<unknown ssid>", false, false)
+        assertEquals(camera, CameraNetworkSelector.select(listOf(camera), "", "192.168.1.1"))
+        assertNull(CameraNetworkSelector.select(listOf(camera.copy(validated = true)), "", "192.168.1.1"))
+    }
+    @Test fun explicitManualAddressRemainsAnAdvancedOverride() {
+        val custom = CameraNetworkHint(3, "10.0.0.22", "LAN", true, false)
+        assertEquals(custom, CameraNetworkSelector.select(listOf(custom), "10.0.0.22", "192.168.1.1"))
+    }
     @Test fun explicitDisconnectPreventsReconnectEvenAfterLateCallbacks() {
         val state = ConnectionLifetime(); state.request(); state.failed(1000); state.stop()
         state.connected(); state.failed(1000000)
@@ -173,7 +205,7 @@ class GalleryInteractionTest {
     }
     @Test fun connectionRefusedDoesNotPretendPasswordIsWrong() {
         val issue = UserIssues.from(java.net.ConnectException("ECONNREFUSED at 192.168.1.1:15740"), UserOperation.CONNECT)
-        assertEquals("相机尚未准备好", issue.title)
+        assertEquals("未找到相机服务", issue.title)
         assertFalse(issue.message.contains("192.168"))
         assertFalse(issue.message.contains("密码错误"))
     }

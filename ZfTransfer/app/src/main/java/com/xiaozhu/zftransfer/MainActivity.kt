@@ -183,7 +183,7 @@ class MainActivity : Activity() {
         runtime.attach(runtimeListener)
         runtime.watch()
         renderRuntime()
-        log("ZfTransfer 0.5.0; Android ${android.os.Build.VERSION.RELEASE}")
+        log("ZfTransfer 0.5.2; Android ${android.os.Build.VERSION.RELEASE}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -207,7 +207,7 @@ class MainActivity : Activity() {
     }
     private fun showSettings() {
         val automatic = prefs.getBoolean("auto_connect", true)
-        AlertDialog.Builder(this).setTitle("相机与应用").setItems(arrayOf("相机 Wi-Fi 配置", "${if (automatic) "关闭" else "开启"}自动连接", "相机地址", "Wi-Fi 设置", "停止 / 断开", "分享日志", "关于", "忘记相机 Wi-Fi", "后台连接设置")) { _, which ->
+        AlertDialog.Builder(this).setTitle("相机与应用").setItems(arrayOf("相机 Wi-Fi 配置", "${if (automatic) "关闭" else "开启"}自动连接", "相机地址", "Wi-Fi 设置", "停止 / 断开", "分享日志", "关于", "忘记相机 Wi-Fi", "后台连接设置", "预览速度测试")) { _, which ->
             when (which) {
                 0 -> showWifiProfile()
                 1 -> {
@@ -229,8 +229,25 @@ class MainActivity : Activity() {
                     .setPositiveButton("忘记") { _, _ -> wifiStore.clear(); profileAttempted = true; pendingProfile = null; report("已忘记本应用保存的相机 Wi-Fi。") }
                     .setNegativeButton("取消", null).show()
                 8 -> showIssuePanel(UserIssue("保持后台连接", "请在系统应用信息中将省电策略设为「无限制」，并允许通知，以便熄屏后保持连接和随时断开。持续连接会增加手机和相机耗电。相机关机后的无线状态仍取决于相机设置与固件。", Recovery.APP_SETTINGS), false, "打开应用设置")
+                9 -> probePreview()
             }
         }.show()
+    }
+    private fun probePreview() {
+        val c = client
+        val photo = photos.getOrNull(previewIndex) ?: photos.firstOrNull()
+        if (c == null || photo == null || busy.get()) {
+            showNotice("请先连接并读取照片", "连接相机并打开需要测试的照片，再从菜单运行预览速度测试。")
+            return
+        }
+        var result = ""
+        task(operation = UserOperation.PREVIEW, onComplete = {
+            if (result.isNotEmpty()) showNotice("预览测试结果", result)
+        }) {
+            check(client === c) { "请先连接相机" }
+            result = PreviewProbe.measure(c, photo, ::log)
+            runtime.report("预览接口测试完成，未导入照片。")
+        }
     }
     private fun showCameraAddress() {
         val draft = EditText(this).apply {
@@ -348,12 +365,15 @@ class MainActivity : Activity() {
             if (generation != previewGeneration || stopped) return@execute
             val uri = verifiedSavedUri(obj, recordKey)
             val cached = if (uri == null) originalPreviews.find(key, obj.size) else null
+            val medium = if (uri == null && cached == null) runtime.mediumPreviews.findCompleted(key) else null
             val source = when {
                 uri != null -> ImageDecoder.createSource(contentResolver, uri)
                 cached != null -> ImageDecoder.createSource(cached)
+                medium != null -> ImageDecoder.createSource(medium)
                 else -> null
             }
             val bitmap = source?.let { runCatching { decodePreview(it, 2560) }.onFailure { log("Preview decode failed: ${it.javaClass.simpleName}: ${it.message}") }.getOrNull() }
+            if (bitmap == null && medium != null) medium.delete()
             val gridBitmap = bitmap?.takeIf { maxOf(it.width, it.height) > 512 }?.let {
                 val scale = 512.0 / maxOf(it.width, it.height)
                 Bitmap.createScaledBitmap(it, maxOf(1, (it.width * scale).toInt()), maxOf(1, (it.height * scale).toInt()), true)
@@ -369,12 +389,25 @@ class MainActivity : Activity() {
                 if (generation != previewGeneration || preview?.isShowing != true) { bitmap?.recycle(); return@ui }
                 if (bitmap != null) {
                     previewImage.showPhoto(bitmap, detailed = true)
-                    previewQuality.text = if (uri != null) "本地原图预览 · 双击或双指缩放" else "高清临时预览 · 双击或双指缩放"
-                    previewHigh.visibility = View.GONE
+                    previewQuality.text = when {
+                        uri != null -> "本地原图预览 · 双击或双指缩放"
+                        cached != null -> "原图临时预览 · 双击或双指缩放"
+                        else -> "清晰预览 ${bitmap.width} × ${bitmap.height} · 双击或双指缩放"
+                    }
+                    previewHigh.visibility = if (uri != null || cached != null) View.GONE else View.VISIBLE
+                    previewHigh.isEnabled = !busy.get() && client != null
                 } else {
-                    previewQuality.text = if (source == null) "快速缩略预览 · 可按需加载高清" else "高清图暂时无法读取，可重新加载"
+                    previewQuality.text = "正在加载清晰预览…"
                     previewHigh.visibility = View.VISIBLE
                     previewHigh.isEnabled = !busy.get() && client != null
+                    runtime.requestMediumPreview(obj, key,
+                        { generation == previewGeneration && !stopped && session == imageSession },
+                        { file ->
+                            if (preview?.isShowing == true) {
+                                if (file != null) loadDetailedPreview(obj, generation)
+                                else previewQuality.text = "清晰预览暂不可用，可按需查看原图"
+                            }
+                        })
                 }
             }
         }
@@ -468,7 +501,7 @@ class MainActivity : Activity() {
         val generation = ++previewGeneration
         previewQuality.text = "快速缩略预览 · 正在检查本地原图"
         previewHigh.visibility = View.VISIBLE
-        previewHigh.text = "加载高清预览（${"%.1f".format(obj.size / 1048576.0)} MB）"
+        previewHigh.text = "查看原图（${"%.1f".format(obj.size / 1048576.0)} MB）"
         previewHigh.isEnabled = !busy.get() && client != null
         previewImage.showPhoto(thumbnail(obj.handle), detailed = false)
         previewImage.contentDescription = obj.filename
