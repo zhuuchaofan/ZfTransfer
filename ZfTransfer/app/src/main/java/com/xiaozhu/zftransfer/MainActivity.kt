@@ -27,28 +27,26 @@ import io.github.noisetta.nikonpull.ptp.*
 import java.net.Inet4Address
 import java.util.concurrent.Executors
 
-/** Foreground-only, read-only camera client. GPL-3.0, see bundled notices. */
+/** Screen observer for the service-owned camera connection. */
 class MainActivity : Activity() {
-    private lateinit var cameraWifi: CameraWifi
-    private val autoGate = AutoConnectGate()
-    private val connectionHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var resumedAt = 0L
-    private var resumed = false
-    private var userStopped = false
-    private var stoppedNetwork: Long? = null
-    private var profileAttempted = false
-    private var pendingProfile: WifiProfile? = null
-    private val session = CameraSession()
-    private var sessionNetwork: Network?
-        get() = session.network
-        set(value) { session.network = value }
+    private val runtime get() = (application as TransferApplication).runtime
+    private val cameraWifi get() = runtime.cameraWifi
+    private val autoGate get() = runtime.autoGate
+    private val session get() = runtime.session
+    private val worker get() = runtime.worker
+    private val busy get() = runtime.busy
     private val wifiStore by lazy { WifiProfileStore(this) }
-    private data class WifiEndpoint(val network: Network, val address: String, val caps: NetworkCapabilities)
-    private val worker get() = session.worker
-    private val busy get() = session.busy
+    private var pendingProfile: WifiProfile? = null
+    private var resumed = false
+    private var userStopped: Boolean
+        get() = runtime.userStopped
+        set(value) { runtime.userStopped = value }
+    private var profileAttempted: Boolean
+        get() = runtime.profileAttempted
+        set(value) { runtime.profileAttempted = value }
     private val imageWorker = Executors.newSingleThreadExecutor()
     private val originalPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "original_previews")) }
-    @Volatile private var imageSession = java.util.UUID.randomUUID().toString()
+    private val imageSession get() = runtime.imageSession
     @Volatile private var previewGeneration = 0L
     private var client: PtpIpClient?
         get() = session.client
@@ -63,12 +61,10 @@ class MainActivity : Activity() {
     private lateinit var footer: LinearLayout
     private lateinit var emptyTitle: TextView
     private lateinit var emptyHint: TextView
-    private var cameraName = "Nikon Zf"
-    private val photos = mutableListOf<CameraObject>()
-    private val thumbs = object : android.util.LruCache<Long, Bitmap>(16 * 1024 * 1024) {
-        override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
-    }
-    private val imported = mutableSetOf<Long>()
+    private val cameraName get() = runtime.cameraName
+    private val photos get() = runtime.photos
+    private val thumbs get() = runtime.thumbs
+    private val imported get() = runtime.imported
     private var selectionMode = false
     private var range: RangeSelection? = null
     private var preview: Dialog? = null
@@ -98,17 +94,46 @@ class MainActivity : Activity() {
     private lateinit var more: Button
     private lateinit var retryTransfer: Button
     private lateinit var download: Button
-    private val transfers by lazy { TransferCoordinator(imports, TransferQueueStore(getSharedPreferences("transfer_queue", MODE_PRIVATE))) }
+    private val transfers get() = runtime.transfers
     private lateinit var progress: ProgressBar
     private val selected = linkedMapOf<Long, CameraObject>()
 
-    private val logs = ArrayDeque<String>()
-    private var handles = emptyList<Long>()
-    private var cursor = 0
-    private val imports by lazy { ImportRepository(contentResolver, prefs, ::log) }
-    private var cameraIdentity: String?
-        get() = imports.identity
-        set(value) { imports.identity = value }
+    private val handles get() = runtime.handles
+    private val cursor get() = runtime.cursor
+    private val imports get() = runtime.imports
+    private val cameraIdentity get() = runtime.cameraIdentity
+    private var renderedRevision = -1L
+    private var renderedSession = ""
+    private val upgraded = mutableSetOf<Long>()
+    private val runtimeListener: () -> Unit = { renderRuntime() }
+    private fun renderRuntime() {
+        if (stopped || !::status.isInitialized) return
+        status.text = runtime.message
+        status.visibility = if (runtime.message.isEmpty()) View.GONE else View.VISIBLE
+        progress.progress = runtime.progress
+        if (renderedSession != imageSession) {
+            renderedSession = imageSession; selected.clear(); selectionMode = false; upgraded.clear()
+            preview?.dismiss(); previewGeneration++
+        }
+        if (renderedRevision != runtime.revision) {
+            renderedRevision = runtime.revision
+            selected.keys.removeAll(runtime.completed)
+            runtime.completed.clear()
+            setBusy(busy.get()); updateSelection()
+            photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
+                upgradeGrid(it, duplicateKey(it), imageSession)
+            }
+        }
+        if (resumed) {
+            runtime.takeIssue()?.let { presentIssue(it.first, it.second) }
+            if (runtime.serviceActive && android.os.Build.VERSION.SDK_INT >= 33 && hasWindowFocus() &&
+                checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED &&
+                !prefs.getBoolean("notification_permission_asked", false)) {
+                prefs.edit().putBoolean("notification_permission_asked", true).apply()
+                requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 42)
+            }
+        }
+    }
     private val prefs by lazy { getSharedPreferences("transfers", MODE_PRIVATE) }
 
     override fun onCreate(state: Bundle?) {
@@ -155,21 +180,10 @@ class MainActivity : Activity() {
         retryTransfer = screen.retryTransfer
         setContentView(screen.root)
         updateRetryControl()
-        cameraWifi = CameraWifi(this, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive -> presentIssue(issue, interactive) }
-        runCatching { cameraWifi.watch() }.onFailure { report("无法监听 Wi-Fi 状态，可点击连接相机手动重试。") }
-        worker.scheduleWithFixedDelay({
-            if (!busy.get() && !stopped) {
-                val c = client
-                if (c != null) try { c.ping() } catch (e: Exception) {
-                    log("Heartbeat failed: ${e.message}")
-                    c.abort()
-                    if (client === c) client = null
-                    presentIssue(UserIssues.from(e, UserOperation.READ_PHOTOS), false)
-                    ui { setBusy(busy.get()) }
-                }
-            }
-        }, 30, 30, java.util.concurrent.TimeUnit.SECONDS)
-        log("ZfTransfer 0.4.1; Android ${android.os.Build.VERSION.RELEASE}; ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        runtime.attach(runtimeListener)
+        runtime.watch()
+        renderRuntime()
+        log("ZfTransfer 0.5.0; Android ${android.os.Build.VERSION.RELEASE}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -193,7 +207,7 @@ class MainActivity : Activity() {
     }
     private fun showSettings() {
         val automatic = prefs.getBoolean("auto_connect", true)
-        AlertDialog.Builder(this).setTitle("相机与应用").setItems(arrayOf("相机 Wi-Fi 配置", "${if (automatic) "关闭" else "开启"}自动连接", "相机地址", "Wi-Fi 设置", "停止 / 断开", "分享日志", "关于", "忘记相机 Wi-Fi")) { _, which ->
+        AlertDialog.Builder(this).setTitle("相机与应用").setItems(arrayOf("相机 Wi-Fi 配置", "${if (automatic) "关闭" else "开启"}自动连接", "相机地址", "Wi-Fi 设置", "停止 / 断开", "分享日志", "关于", "忘记相机 Wi-Fi", "后台连接设置")) { _, which ->
             when (which) {
                 0 -> showWifiProfile()
                 1 -> {
@@ -204,11 +218,8 @@ class MainActivity : Activity() {
                 2 -> showCameraAddress()
                 3 -> startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 4 -> {
-                    userStopped = true; stoppedNetwork = sessionNetwork?.networkHandle
-                    autoGate.stop(stoppedNetwork)
-                    if (cameraWifi.requesting) cameraWifi.releaseRequest()
-                    session.disconnect()
-                    report("已停止，成功导入的照片仍保留。点击顶部相机状态可重新连接。")
+                    runtime.stop()
+                    stopService(Intent(this, CameraConnectionService::class.java))
                     setBusy(busy.get())
                 }
                 5 -> shareLogs()
@@ -217,6 +228,7 @@ class MainActivity : Activity() {
                     .setMessage("删除本应用加密保存的名称和密码，不删除系统 Wi-Fi 或导入照片。")
                     .setPositiveButton("忘记") { _, _ -> wifiStore.clear(); profileAttempted = true; pendingProfile = null; report("已忘记本应用保存的相机 Wi-Fi。") }
                     .setNegativeButton("取消", null).show()
+                8 -> showIssuePanel(UserIssue("保持后台连接", "请在系统应用信息中将省电策略设为「无限制」，并允许通知，以便熄屏后保持连接和随时断开。持续连接会增加手机和相机耗电。相机关机后的无线状态仍取决于相机设置与固件。", Recovery.APP_SETTINGS), false, "打开应用设置")
             }
         }.show()
     }
@@ -287,10 +299,7 @@ class MainActivity : Activity() {
             }
             return
         }
-        if (client != null) {
-            session.disconnect(); setBusy(false)
-        }
-        cameraWifi.request(profile, !automatic)
+        runtime.requestWifi(profile, automatic)
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -298,55 +307,6 @@ class MainActivity : Activity() {
         val profile = pendingProfile; pendingProfile = null
         if (permissions.indexOf(wifiPermission()).let { it >= 0 && grantResults.getOrNull(it) == PackageManager.PERMISSION_GRANTED } && profile != null) requestWifi(profile, false)
         else presentIssue(UserIssue("未获得 Wi-Fi 连接权限", "可以在应用权限中开启相关权限，也可以手动连接系统 Wi-Fi 后返回应用，继续自动识别相机。", Recovery.APP_SETTINGS))
-    }
-    private fun wifiEndpoints(manual: String, only: Network? = null): List<WifiEndpoint> {
-        val cm = getSystemService(ConnectivityManager::class.java)
-        val candidates = if (only != null) listOf(only) else listOfNotNull(cameraWifi.requestedNetwork) + cm.allNetworks.toList()
-        return candidates.distinct().mapNotNull { network ->
-            val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
-            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
-            val links = cm.getLinkProperties(network) ?: return@mapNotNull null
-            val gateway = links.routes.asSequence().filter { it.isDefaultRoute }
-                .mapNotNull { (it.gateway as? Inet4Address)?.hostAddress }.firstOrNull { CameraAddress.isUsable(it) }
-                ?: if (android.os.Build.VERSION.SDK_INT >= 30) links.dhcpServerAddress?.hostAddress?.takeIf { CameraAddress.isUsable(it) } else null
-            val address = manual.ifEmpty { gateway ?: return@mapNotNull null }
-            WifiEndpoint(network, address, caps)
-        }
-    }
-    private fun maybeAutoConnect() {
-        if (!resumed || stopped || busy.get() || client != null || userStopped || !hasWindowFocus()) return
-        val settling = 1800L - (android.os.SystemClock.elapsedRealtime() - resumedAt)
-        if (settling > 0) { connectionHandler.postDelayed({ if (!stopped) cameraWifi.schedule() }, settling); return }
-        if (!prefs.getBoolean("auto_connect", true) && cameraWifi.requestedNetwork == null) return
-        val manual = host.text.toString().trim()
-        if (manual.isNotEmpty() && !CameraAddress.isUsable(manual)) return
-        val known = prefs.getString("last_camera_address", "192.168.1.1").orEmpty()
-        val endpoint = wifiEndpoints(manual).firstOrNull {
-            val ssid = runCatching { (it.caps.transportInfo as? WifiInfo)?.ssid }.getOrNull()
-            AutoConnectGate.isCameraCandidate(it.caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED), ssid,
-                it.address, if (manual.isEmpty()) known else manual, it.network == cameraWifi.requestedNetwork)
-        }
-        if (endpoint != null) {
-            if (autoGate.take(endpoint.network.networkHandle, endpoint.address)) {
-                connectCamera(endpoint.network, automatic = true)
-                cameraLabel.text = "Wi-Fi 已连接 · 正在识别相机…"
-            }
-        } else if (!profileAttempted && !cameraWifi.requesting) {
-            val saved = wifiStore.load()
-            if (saved != null && checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
-                profileAttempted = true; requestWifi(saved, true)
-            }
-        }
-    }
-    private fun wifiLost(network: Network) {
-        if (stopped) return
-        autoGate.lost(network.networkHandle)
-        if (network.networkHandle == stoppedNetwork) { userStopped = false; stoppedNetwork = null }
-        if (sessionNetwork == network) {
-            session.disconnect()
-            report("相机 Wi-Fi 已断开。重新连接相机热点后将自动识别，已导入照片仍保留。")
-            setBusy(busy.get())
-        }
     }
     private fun applyRange(end: Int) {
         if (busy.get()) return
@@ -459,8 +419,11 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumed = true
-        resumedAt = android.os.SystemClock.elapsedRealtime()
-        if (::cameraWifi.isInitialized) cameraWifi.schedule()
+        runtime.foreground = true
+        runtime.resumedAt = android.os.SystemClock.elapsedRealtime()
+        runtime.watch()
+        renderRuntime()
+        cameraWifi.schedule()
         if (!::grid.isInitialized || busy.get()) return
         val snapshot = photos.toList()
         val identity = cameraIdentity
@@ -473,10 +436,10 @@ class MainActivity : Activity() {
             }
         }
     }
-    override fun onPause() { resumed = false; super.onPause() }
+    override fun onPause() { resumed = false; runtime.foreground = false; super.onPause() }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && ::cameraWifi.isInitialized) cameraWifi.schedule()
+        if (hasFocus) cameraWifi.schedule()
     }
     private val cells by lazy { GalleryPhotoCell(this) }
     private fun photoCell(obj: CameraObject): View = cells.create(obj, thumbnail(obj.handle),
@@ -520,18 +483,14 @@ class MainActivity : Activity() {
         previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
     }
     private fun ui(action: () -> Unit) { runOnUiThread { if (!isDestroyed && !stopped) action() } }
-    @Synchronized private fun log(message: String) {
-        if (logs.size >= 400) logs.removeFirst()
-        logs.addLast("${java.time.LocalTime.now().withNano(0)} $message")
-        android.util.Log.i("ZfTransfer", message)
-    }
+    private fun log(message: String) = runtime.log(message)
     private fun presentIssue(issue: UserIssue, interactive: Boolean = true) { ui {
         report("${issue.title}\n${issue.message}")
         status.setTextColor(yellow)
         if (interactive) showIssuePanel(issue)
     } }
     private fun showNotice(title: String, message: String) = showIssuePanel(UserIssue(title, message, Recovery.NONE), false)
-    private fun showIssuePanel(issue: UserIssue, diagnostics: Boolean = true) {
+    private fun showIssuePanel(issue: UserIssue, diagnostics: Boolean = true, primaryLabel: String? = null) {
         if (isFinishing || stopped) return
         issueDialog?.dismiss()
         val dialog = Dialog(this)
@@ -545,7 +504,7 @@ class MainActivity : Activity() {
         sheet.addView(label(issue.message, 15f).apply {
             setTextColor(muted); setLineSpacing(dp(4).toFloat(), 1f)
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
-        val primary = when (issue.recovery) {
+        val primary = primaryLabel ?: when (issue.recovery) {
             Recovery.WIFI_SETTINGS -> "检查 Wi-Fi 连接"
             Recovery.APP_SETTINGS -> "查看应用权限"
             Recovery.STORAGE_SETTINGS -> "查看手机存储"
@@ -573,20 +532,7 @@ class MainActivity : Activity() {
     }
     private fun report(message: String) { ui { status.text = message; status.setTextColor(muted); status.visibility = View.VISIBLE } }
     private fun task(operation: UserOperation = UserOperation.READ_PHOTOS, silentErrors: Boolean = false, onComplete: () -> Unit = {}, action: () -> Unit) {
-        if (!busy.compareAndSet(false, true)) return
-        setBusy(true)
-        worker.execute {
-            try { action() }
-            catch (e: Exception) {
-                log("FAIL ${e.stackTraceToString()}")
-                if (operation == UserOperation.CONNECT) session.disconnect() else session.recoverAfterFailure()
-                if (userStopped) report("已停止。已成功导入的照片仍保留，未完成文件不会标记为已导入。")
-                else presentIssue(UserIssues.from(e, operation), !silentErrors)
-            } finally {
-                busy.set(false)
-                ui { setBusy(false); onComplete() }
-            }
-        }
+        runtime.task(operation, silentErrors, { if (!stopped && !isDestroyed) onComplete() }, action)
     }
     private fun setBusy(value: Boolean) {
         connect.isEnabled = !value
@@ -609,106 +555,8 @@ class MainActivity : Activity() {
         updateRetryControl()
         adapter.notifyDataSetChanged()
     }
-    private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) {
-        userStopped = false
-        val manual = host.text.toString().trim()
-        if (manual.isNotEmpty() && !validIpv4(manual)) {
-            report("请填写正确的 IPv4 地址，或清空后自动识别。")
-            return
-        }
-        prefs.edit().putString("host", manual).apply()
-        if (busy.get()) return
-        cacheDir.listFiles()?.filter { it.name.startsWith("thumb_") && it.name.endsWith(".jpg") }?.forEach { it.delete() }
-        imageSession = java.util.UUID.randomUUID().toString()
-        previewGeneration++
-        photos.clear(); thumbs.evictAll(); imported.clear(); selected.clear(); selectionMode = false; updateSelection()
-        task(operation = UserOperation.CONNECT, silentErrors = automatic, onComplete = {
-            if (automatic && client == null && networkOverride != null) {
-                connectionHandler.postDelayed({
-                    if (!stopped && resumed && !userStopped && client == null && !busy.get()) {
-                        val endpoint = wifiEndpoints(manual, networkOverride).firstOrNull()
-                        if (endpoint != null && autoGate.retryAfterFailure(endpoint.network.networkHandle, endpoint.address)) {
-                            report("正在等待相机就绪，自动重试连接…")
-                            maybeAutoConnect()
-                        }
-                    }
-                }, 3000)
-            }
-        }) {
-            session.disconnect()
-            val candidate = wifiEndpoints(manual, networkOverride).firstOrNull()
-                ?: error("Wi-Fi 尚未就绪：请保持连接相机热点，等待获取 IPv4 地址后重试")
-            val network = candidate.network
-            val address = candidate.address
-            sessionNetwork = network
-            log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
-            report("正在连接 $address …")
-            val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
-                zfMode = true, log = ::log)
-            client = c
-            c.connect()
-            if (client !== c) { c.abort(); error("已停止连接") }
-            val info = c.getDeviceInfo()
-            log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
-            prefs.edit().putString("last_camera_address", address).apply()
-            cameraName = info.displayName
-            cameraIdentity = info.serialNumber.takeIf { it.isNotBlank() }?.let { "${info.manufacturer}|${info.model}|$it" }
-            if (cameraIdentity == null) {
-                log("No stable serial: duplicate skipping disabled")
-                ui { showNotice("无法确认历史导入", "相机未提供稳定标识，本次不会显示「已导入」或自动跳过照片，避免误判。")}
-            }
-            // Zf may advertise a partial operation table: exercise read operations directly.
-            handles = c.listObjectHandles().asReversed()
-            cursor = 0
-            report("已连接 ${info.displayName}，共 ${handles.size} 个对象，正在读取照片…")
-            loadPage(c)
-        }
-    }
-    private fun readPage() { task { loadPage(client ?: error("请先连接相机")) } }
-    private fun loadPage(c: PtpIpClient) {
-        var foundPhotos = 0
-        val end = minOf(cursor + 40, handles.size)
-        while (cursor < end) {
-            check(client === c) { "已停止读取" }
-            val obj = c.getObjectInfo(handles[cursor])
-            cursor++
-            if (obj.isJpeg) {
-                val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpException) {
-                    // A PTP error has a fully consumed response; transport errors abort the task.
-                    if (!e.message.orEmpty().startsWith("Camera returned PTP error")) throw e
-                    log("Thumbnail unavailable; keeping original download")
-                    null
-                }
-                val bitmap = thumb?.let {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(it, 0, it.size, bounds)
-                    val opts = BitmapFactory.Options().apply {
-                        var sample = 1
-                        while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
-                        inSampleSize = sample
-                    }
-                    BitmapFactory.decodeByteArray(it, 0, it.size, opts)
-                }
-                if (bitmap != null) runCatching {
-                    thumbnailFile(obj.handle).writeBytes(thumb!!)
-                }
-                val exists = savedExists(obj)
-                val session = imageSession
-                val recordKey = duplicateKey(obj)
-                ui {
-                    photos.add(obj)
-                    if (bitmap != null) thumbs.put(obj.handle, bitmap)
-                    if (exists) imported.add(obj.handle)
-                    adapter.notifyDataSetChanged()
-                    updateGalleryControls()
-                }
-                if (exists) upgradeGrid(obj, recordKey, session)
-                foundPhotos++
-            }
-            report("已读取 $cursor / ${handles.size} 个对象，本批找到 $foundPhotos 张 JPEG")
-        }
-        report("已读取 $cursor / ${handles.size} 个对象。勾选 JPEG 下载原图${if (cursor < handles.size) "，或继续读取下一批。" else "。"}")
-    }
+    private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) = runtime.connectCamera(networkOverride, automatic)
+    private fun readPage() = runtime.readPage()
     private fun updateSelection() {
         download.text = if (selected.isEmpty()) "导入原图" else "导入原图（${selected.size}）"
         download.isEnabled = selected.isNotEmpty() && client != null && !busy.get()
@@ -784,26 +632,10 @@ class MainActivity : Activity() {
         retryTransfer.text = "重试未完成（$count 张）"
         retryTransfer.isEnabled = !busy.get() && client != null
     }
-    private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
-        if (items.isEmpty()) return
-        task(operation = UserOperation.IMPORT) {
-            val c = client ?: error("请先连接相机")
-            val (done, skipped) = transfers.run(c, items, skipExisting, retry,
-                checkActive = { check(client === c) { "已停止传输" } },
-                progress = { index, obj, percentage ->
-                    report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
-                    ui { progress.progress = percentage }
-                }, completed = { obj, verified -> ui {
-                    selected.remove(obj.handle)
-                    if (verified) imported.add(obj.handle) else imported.remove(obj.handle)
-                    updateSelection(); updateRetryControl()
-                } })
-            report("已导入 $done 张，跳过 $skipped 张。保存至系统相册 Pictures/ZfTransfer。")
-        }
-    }
+    private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) = runtime.startImport(items, skipExisting, retry)
     private fun duplicateKey(obj: CameraObject): String? = imports.key(obj)
     private fun shareLogs() {
-        val text = synchronized(this) { logs.joinToString("\n") }
+        val text = runtime.logText()
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text)
         }, "分享连接日志"))
@@ -818,9 +650,7 @@ class MainActivity : Activity() {
         stopped = true
         preview?.dismiss()
         issueDialog?.dismiss()
-        connectionHandler.removeCallbacksAndMessages(null)
-        if (::cameraWifi.isInitialized) cameraWifi.close()
-        session.close()
+        runtime.detach(runtimeListener)
         previewGeneration++
         imageWorker.shutdownNow()
         super.onDestroy()

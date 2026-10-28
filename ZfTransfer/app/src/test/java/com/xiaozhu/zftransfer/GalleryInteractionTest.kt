@@ -5,6 +5,32 @@ import org.junit.Test
 
 class GalleryInteractionTest {
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun explicitDisconnectPreventsReconnectEvenAfterLateCallbacks() {
+        val state = ConnectionLifetime(); state.request(); state.failed(1000); state.stop()
+        state.connected(); state.failed(1000000)
+        assertFalse(state.desired); assertFalse(state.canReconnect(Long.MAX_VALUE))
+        state.request(); assertTrue(state.canReconnect(0))
+    }
+    @Test fun screenChangesDoNotAlterConnectionIntent() {
+        val state = ConnectionLifetime(); state.request(); state.connected()
+        assertTrue(state.desired); assertTrue(state.canReconnect(1000))
+    }
+    @Test fun reconnectBackoffGrowsAndCapsAtOneMinute() {
+        val state = ConnectionLifetime(); state.request()
+        var now = 0L
+        for (delay in listOf(5000L,10000L,20000L,40000L,60000L,60000L)) {
+            state.failed(now)
+            assertFalse(state.canReconnect(now + delay - 1)); assertTrue(state.canReconnect(now + delay))
+            state.request() // Ensuring an existing service must not reset the backoff.
+            assertFalse(state.canReconnect(now + delay - 1))
+            now += delay
+        }
+    }
+    @Test fun successfulReconnectResetsBackoff() {
+        val state = ConnectionLifetime(); state.request(); repeat(5) { state.failed(0) }
+        state.connected(); state.failed(1000)
+        assertTrue(state.canReconnect(6000)); assertFalse(state.canReconnect(5999))
+    }
     @Test fun filmstripCanReachBeginningMiddleAndEndOfAllLoadedPhotos() {
         assertEquals(0..5, FilmstripWindow.visible(0, 312, 78, 932))
         assertTrue(450 in FilmstripWindow.visible(450 * 78, 312, 78, 932))

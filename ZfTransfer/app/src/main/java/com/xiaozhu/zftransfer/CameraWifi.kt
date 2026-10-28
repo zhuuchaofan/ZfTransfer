@@ -21,6 +21,7 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
         private set
     var requesting = false
         private set
+    val hasActiveRequest get() = requestCallback != null
     private var requestCallback: ConnectivityManager.NetworkCallback? = null
     private var watching = false
     private val observer = object : ConnectivityManager.NetworkCallback() {
