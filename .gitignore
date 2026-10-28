@@ -1,0 +1,30 @@
+# 构建产物与本机缓存
+/.gradle-home/
+/build-local/
+**/.gradle/
+**/build/
+**/.idea/
+**/local.properties
+*.iml
+*.apk
+*.idsig
+__pycache__/
+*.pyc
+
+# 本轮开发期间的一次性修补与实机操作脚本，保留在本机
+/*.py
+
+# 本机凭据与正式签名密钥
+.aws/
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+
+# 此文件是工程公开的测试签名，仅用于测试包覆盖安装
+!/ZfTransfer/test-keystore.jks
