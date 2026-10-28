@@ -16,6 +16,16 @@ class ConnectionRuntime(private val context: android.content.Context) {
     val session = CameraSession()
     val lifetime = ConnectionLifetime()
     val autoGate = AutoConnectGate()
+    private val preparation = ConnectionPreparation()
+    @Volatile private var readyClient: PtpIpClient? = null
+    val connectionReady get() = readyClient != null && readyClient === client
+    private var pendingConnect: Runnable? = null
+    private var pendingNetwork: Network? = null
+    val connectionPending get() = pendingConnect != null
+    private fun cancelPendingConnect() {
+        pendingConnect?.let { connectionHandler.removeCallbacks(it) }
+        pendingConnect = null; pendingNetwork = null
+    }
     val connectionHandler = android.os.Handler(android.os.Looper.getMainLooper())
     var foreground = false
     var resumedAt = 0L
@@ -58,7 +68,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private val listeners = linkedSetOf<() -> Unit>()
     private val logs = ArrayDeque<String>()
     private data class WifiEndpoint(val network: Network, val address: String, val caps: NetworkCapabilities)
-    val cameraWifi = CameraWifi(context, ::maybeAutoConnect, ::wifiLost, ::report, ::presentIssue)
+    val cameraWifi = CameraWifi(context, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive ->
+        if (!connectionReady) presentIssue(issue, interactive)
+        else log("Ignoring obsolete Wi-Fi request failure; verified camera session is connected")
+    }
     private fun now() = android.os.SystemClock.elapsedRealtime()
     fun attach(listener: () -> Unit) { listeners.add(listener) }
     fun detach(listener: () -> Unit) { listeners.remove(listener) }
@@ -91,12 +104,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
     fun requestWifi(profile: WifiProfile, automatic: Boolean) {
         if (!ensureService()) return
         userStopped = false
+        cancelPendingConnect(); preparation.reset()
         session.disconnect()
         lastWifiAttempt = now()
         cameraWifi.request(profile, !automatic)
     }
     fun stop() {
-        userStopped = true; lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
+        userStopped = true; cancelPendingConnect(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
         session.disconnect(); cameraWifi.close(); progress = 0; revision++
         report("已断开连接。成功导入的照片仍保留，未完成任务可稍后重试。")
         changed()
@@ -165,6 +179,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private fun wifiLost(network: Network) {
         if (userStopped) return
         autoGate.lost(network.networkHandle)
+        if (pendingNetwork == network) { cancelPendingConnect(); preparation.resetNetwork() }
         if (sessionNetwork == network) {
             session.disconnect()
             report("相机 Wi-Fi 已断开。重新连接相机热点后将自动识别，已导入照片仍保留。")
@@ -181,7 +196,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 if (operation == UserOperation.CONNECT) session.disconnect() else session.recoverAfterFailure()
                 if (!userStopped && client == null) lifetime.failed(now())
                 if (userStopped) report("已停止。已成功导入的照片仍保留，未完成文件不会标记为已导入。")
-                else presentIssue(UserIssues.from(e, operation), !silentErrors)
+                else if (operation == UserOperation.CONNECT && lifetime.desired && preparation.retryQuietly(e)) {
+                    ui { issue = null }
+                    report("正在等待相机网络和连接服务就绪，将自动重试。请保持手机连接相机热点。")
+                } else presentIssue(UserIssues.from(e, operation), !silentErrors)
             } finally {
                 busy.set(false)
                 ui { revision++; changed(); onComplete() }
@@ -213,6 +231,18 @@ class ConnectionRuntime(private val context: android.content.Context) {
             return
         }
         if (!ensureService()) return
+        val wait = preparation.waitMillis(selectedEndpoint.network.networkHandle, selectedEndpoint.address, now())
+        cancelPendingConnect()
+        if (wait > 0) {
+            report("已识别相机 Wi-Fi，正在等待网络地址稳定…")
+            pendingNetwork = selectedEndpoint.network
+            pendingConnect = Runnable {
+                pendingConnect = null; pendingNetwork = null
+                if (lifetime.desired && !userStopped) connectCamera(selectedEndpoint.network, automatic)
+            }.also { connectionHandler.postDelayed(it, wait) }
+            revision++; changed()
+            return
+        }
         cacheDir.listFiles()?.filter { it.name.startsWith("thumb_") && it.name.endsWith(".jpg") }?.forEach { it.delete() }
         imageSession = java.util.UUID.randomUUID().toString()
         photos.clear(); thumbs.evictAll(); imported.clear(); completed.clear(); revision++; changed()
@@ -239,6 +269,11 @@ class ConnectionRuntime(private val context: android.content.Context) {
             prefs.edit().putString("last_camera_address", address).apply {
                 if (!learnedSsid.isNullOrBlank() && learnedSsid != "<unknown ssid>") putString("last_camera_ssid", learnedSsid)
             }.apply()
+            readyClient = c
+            ui {
+                // A user-selected system network already works: cancel a different, unfulfilled request.
+                if (client === c && cameraWifi.requesting && cameraWifi.requestedNetwork == null) cameraWifi.releaseRequest()
+            }
             cameraName = info.displayName
             cameraIdentity = info.serialNumber.takeIf { it.isNotBlank() }?.let { "${info.manufacturer}|${info.model}|$it" }
             if (cameraIdentity == null) {
@@ -249,7 +284,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             handles = c.listObjectHandles().asReversed()
             cursor = 0
             report("已连接 ${info.displayName}，共 ${handles.size} 个对象，正在读取照片…")
-            lifetime.connected(); ui { issue = null }; revision++
+            lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
             loadPage(c)
         }
     }

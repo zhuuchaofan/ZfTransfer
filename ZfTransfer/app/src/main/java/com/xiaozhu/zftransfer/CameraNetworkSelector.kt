@@ -14,7 +14,7 @@ object CameraNetworkSelector {
                 ssid != null && ssid in names -> 90
                 ssid?.startsWith("NIKON", ignoreCase = true) == true -> 80
                 manualAddress.isNotEmpty() -> 20 // Explicit advanced setting only.
-                !network.validated && network.address == knownAddress -> 10
+                ssid == null && !network.validated && network.address == knownAddress -> 10
                 else -> 0
             }
         }

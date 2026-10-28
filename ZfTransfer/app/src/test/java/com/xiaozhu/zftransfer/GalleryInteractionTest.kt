@@ -5,6 +5,31 @@ import org.junit.Test
 
 class GalleryInteractionTest {
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun repeatedClicksDoNotRestartNetworkSettlingDeadline() {
+        val state = ConnectionPreparation()
+        assertEquals(1500L,state.waitMillis(1,"192.168.1.1",100))
+        assertEquals(500L,state.waitMillis(1,"192.168.1.1",1100))
+        assertEquals(0L,state.waitMillis(1,"192.168.1.1",1600))
+    }
+    @Test fun changingNetworkOrAddressRequiresANewSettlingWindow() {
+        val state = ConnectionPreparation()
+        state.waitMillis(1,"192.168.1.1",0)
+        assertEquals(1500L,state.waitMillis(2,"192.168.1.1",2000))
+        assertEquals(1500L,state.waitMillis(2,"10.0.0.1",4000))
+        state.resetNetwork(); assertEquals(1500L,state.waitMillis(2,"10.0.0.1",6000))
+    }
+    @Test fun onlyFirstTwoTransportFailuresAreRetriedQuietly() {
+        val state = ConnectionPreparation()
+        val failure = IllegalStateException("connect", java.net.ConnectException("refused"))
+        assertTrue(state.retryQuietly(failure)); assertTrue(state.retryQuietly(failure)); assertFalse(state.retryQuietly(failure))
+        state.reset(); assertTrue(state.retryQuietly(failure))
+    }
+    @Test fun protocolRejectionIsNotSilencedAsNetworkTransition() {
+        assertFalse(ConnectionPreparation().retryQuietly(IllegalStateException("Camera rejected session")))
+    }
+    @Test fun knownNonCameraSsidIsRejectedEvenWhenOfflineGatewayMatches() {
+        assertNull(CameraNetworkSelector.select(listOf(CameraNetworkHint(1,"192.168.1.1","HOME",false,false)), "", "192.168.1.1"))
+    }
     @Test fun mediumPreviewAcceptsPhoneSizedImagesAndRejectsThumbnailsOrOriginals() {
         assertTrue(MediumPreviewPolicy.usable(1620,1080,634805))
         assertTrue(MediumPreviewPolicy.usable(1080,1620,634805))

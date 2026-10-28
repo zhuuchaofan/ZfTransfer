@@ -41,7 +41,7 @@ class CameraConnectionService : Service() {
         val title = when {
             runtime.userStopped -> "相机连接已断开"
             runtime.busy.get() -> "正在与相机通信"
-            runtime.client != null -> "${runtime.cameraName} · 保持连接中"
+            runtime.connectionReady -> "${runtime.cameraName} · 保持连接中"
             else -> "等待相机连接"
         }
         return Notification.Builder(this, CHANNEL)
@@ -54,7 +54,7 @@ class CameraConnectionService : Service() {
             .build()
     }
     private fun refresh(force: Boolean = false) {
-        val needsRadio = runtime.lifetime.desired && (runtime.client != null || runtime.busy.get())
+        val needsRadio = runtime.lifetime.desired && (runtime.client != null || runtime.busy.get() || runtime.connectionPending)
         if (needsRadio) {
             // Renew a bounded lease; a stuck service cannot retain a wake lock indefinitely.
             if (force || !cpu.isHeld) cpu.acquire(10 * 60 * 1000L)

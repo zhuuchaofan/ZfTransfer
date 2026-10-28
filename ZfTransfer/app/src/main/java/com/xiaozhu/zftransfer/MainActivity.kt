@@ -183,7 +183,7 @@ class MainActivity : Activity() {
         runtime.attach(runtimeListener)
         runtime.watch()
         renderRuntime()
-        log("ZfTransfer 0.5.2; Android ${android.os.Build.VERSION.RELEASE}")
+        log("ZfTransfer 0.5.3; Android ${android.os.Build.VERSION.RELEASE}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -579,8 +579,12 @@ class MainActivity : Activity() {
         if (::previewSelect.isInitialized) previewSelect.isEnabled = !value
         grid.editable = !value
         progress.visibility = if (value) View.VISIBLE else View.GONE
-        cameraLabel.text = if (client == null) "$cameraName · 点此连接" else "$cameraName · 已连接"
-        cameraLabel.setTextColor(if (client == null) muted else yellow)
+        cameraLabel.text = when {
+            runtime.connectionReady -> "$cameraName · 已连接"
+            busy.get() || runtime.connectionPending || cameraWifi.requesting -> "$cameraName · 正在连接"
+            else -> "$cameraName · 点此连接"
+        }
+        cameraLabel.setTextColor(if (runtime.connectionReady) yellow else muted)
         connect.visibility = if (client == null) View.VISIBLE else View.GONE
         emptyTitle.text = if (client == null) "让照片，回到你的生活" else "正在寻找相机中的照片"
         emptyHint.text = if (client == null) "连接相机 Wi-Fi 后，将自动识别\n也可在应用内设置 Wi-Fi 名和密码" else "仅显示 JPEG 原图；可继续读取下一批"
