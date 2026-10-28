@@ -4,6 +4,119 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GalleryInteractionTest {
+    @Test fun movingPinchFocusMovesPhotoWithoutChangingScale() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f); scale(2f, 500f, 400f) }
+        state.scale(1f, 500f, 400f, 80f, 40f)
+        assertEquals(2f, state.zoom, 0.001f)
+        assertEquals(-420f, state.x, 0.001f)
+        assertEquals(-60f, state.y, 0.001f)
+    }
+    @Test fun zoomStartsWithAspectFitWithoutCropping() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f) }
+        assertEquals(0.25f, state.baseScale, 0.0001f)
+        assertEquals(0f, state.x, 0.001f)
+        assertEquals(150f, state.y, 0.001f)
+    }
+    @Test fun doubleTapKeepsTappedImagePointAnchoredAndThenResets() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f) }
+        state.doubleTap(250f, 400f)
+        assertEquals(2f, state.zoom, 0.001f)
+        assertEquals(-250f, state.x, 0.001f)
+        assertEquals(-100f, state.y, 0.001f)
+        state.doubleTap(700f, 600f)
+        assertEquals(1f, state.zoom, 0.001f)
+        assertEquals(150f, state.y, 0.001f)
+    }
+    @Test fun pinchLimitsZoomAndReturnsToFitAtMinimum() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f) }
+        state.scale(100f, 500f, 400f)
+        assertEquals(5f, state.zoom, 0.001f)
+        state.scale(0.001f, 500f, 400f)
+        assertEquals(1f, state.zoom, 0.001f)
+        assertEquals(0f, state.x, 0.001f)
+        assertEquals(150f, state.y, 0.001f)
+    }
+    @Test fun portraitPanCentersShortAxisAndClampsLongAxis() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 1000f, 4000f); scale(2f, 500f, 400f) }
+        state.pan(10000f, 10000f)
+        assertEquals(300f, state.x, 0.001f)
+        assertEquals(0f, state.y, 0.001f)
+        state.pan(-10000f, -10000f)
+        assertEquals(300f, state.x, 0.001f)
+        assertEquals(-800f, state.y, 0.001f)
+    }
+    @Test fun switchingPhotoClearsPreviousZoomAndPan() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f); scale(3f, 400f, 300f); pan(100f, 20f) }
+        state.fit(1000f, 800f, 1000f, 4000f)
+        assertEquals(1f, state.zoom, 0.001f)
+        assertEquals(400f, state.x, 0.001f)
+        assertEquals(0f, state.y, 0.001f)
+    }
+    @Test fun invalidScaleDoesNotCorruptGeometry() {
+        val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f) }
+        state.scale(Float.NaN, 500f, 400f)
+        state.scale(-2f, 500f, 400f)
+        assertEquals(1f, state.zoom, 0.001f)
+        assertEquals(150f, state.y, 0.001f)
+    }
+    @Test fun wrappedSocketTimeoutBecomesUsefulChineseMessage() {
+        val issue = UserIssues.from(java.io.IOException("Connection failed", java.net.SocketTimeoutException("read timed out")), UserOperation.CONNECT)
+        assertEquals("等待相机响应超时", issue.title)
+        assertEquals(Recovery.WIFI_SETTINGS, issue.recovery)
+        assertFalse(issue.message.contains("timed out"))
+    }
+    @Test fun connectionRefusedDoesNotPretendPasswordIsWrong() {
+        val issue = UserIssues.from(java.net.ConnectException("ECONNREFUSED at 192.168.1.1:15740"), UserOperation.CONNECT)
+        assertEquals("相机尚未准备好", issue.title)
+        assertFalse(issue.message.contains("192.168"))
+        assertFalse(issue.message.contains("密码错误"))
+    }
+    @Test fun storageFailureOffersStorageRecovery() {
+        val issue = UserIssues.from(java.io.IOException("write failed: ENOSPC"), UserOperation.IMPORT)
+        assertEquals("手机存储空间不足", issue.title)
+        assertEquals(Recovery.STORAGE_SETTINGS, issue.recovery)
+    }
+    @Test fun permissionFailureOffersAppSettings() {
+        assertEquals(Recovery.APP_SETTINGS, UserIssues.from(SecurityException("private provider details"), UserOperation.IMPORT).recovery)
+    }
+    @Test fun incompletePhotoDoesNotClaimSuccessfulImport() {
+        val issue = UserIssues.from(IllegalStateException("文件大小不一致：1 / 100"), UserOperation.IMPORT)
+        assertEquals("照片没有完整传输", issue.title)
+        assertTrue(issue.message.contains("不会标记为已导入"))
+        assertEquals(issue.title, UserIssues.from(java.io.IOException("Camera transfer ended early (1 of 100 bytes)"), UserOperation.IMPORT).title)
+    }
+    @Test fun unknownErrorsNeverExposePathsPasswordsOrPlatformExceptions() {
+        val raw = "ErrnoException /private/user/photo.jpg password=not-for-display"
+        val issue = UserIssues.from(java.io.IOException(raw), UserOperation.PREVIEW)
+        assertEquals("暂时无法加载高清预览", issue.title)
+        listOf("ErrnoException", "/private/", "not-for-display", "password=").forEach { assertFalse((issue.title + issue.message).contains(it)) }
+    }
+    private fun withPreviewCache(test: (java.io.File, OriginalPreviewCache) -> Unit) {
+        val base = java.nio.file.Files.createDirectories(java.io.File("build/preview-tests").toPath().toAbsolutePath())
+        val folder = java.nio.file.Files.createTempDirectory(base, "zf-preview-test-").toFile()
+        try { test(folder, OriginalPreviewCache(folder, 12)) }
+        finally { folder.listFiles().orEmpty().forEach { it.delete() }; folder.delete() }
+    }
+    @Test fun incompletePreviewIsNotPublishedAndTemporaryFileIsRemoved() = withPreviewCache { folder, cache ->
+        assertTrue(runCatching { cache.store("camera/photo", 8) { it.write(byteArrayOf(1, 2)) } }.isFailure)
+        assertNull(cache.find("camera/photo", 8))
+        assertTrue(folder.listFiles().orEmpty().isEmpty())
+    }
+    @Test fun previewCacheVerifiesSizeAndStaysInsidePrivateDirectory() = withPreviewCache { folder, cache ->
+        val file = cache.store("../../photo", 8) { it.write(ByteArray(8)) }
+        assertEquals(folder.canonicalFile, file.canonicalFile.parentFile)
+        assertEquals(file, cache.find("../../photo", 8))
+        assertNull(cache.find("../../photo", 9))
+        file.delete()
+        assertNull(cache.find("../../photo", 8))
+    }
+    @Test fun previewCacheEvictsOlderOriginalsToKeepBudget() = withPreviewCache { _, cache ->
+        cache.store("first", 8) { it.write(ByteArray(8)) }
+        cache.store("second", 8) { it.write(ByteArray(8)) }
+        assertNull(cache.find("first", 8))
+        assertNotNull(cache.find("second", 8))
+        assertTrue(runCatching { cache.store("too-large", 13) { it.write(ByteArray(13)) } }.isFailure)
+    }
     @Test fun automaticHandshakeRetriesAreBoundedAndRespectStop() {
         val gate = AutoConnectGate()
         assertTrue(gate.take(1, "192.168.1.1"))

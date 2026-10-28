@@ -12,7 +12,8 @@ import android.os.Looper
 
 /** Watches physical Wi-Fi; optional specifier requests are scoped to this app. */
 class CameraWifi(context: Context, private val changed: () -> Unit,
-                 private val lost: (Network) -> Unit, private val status: (String) -> Unit) {
+                 private val lost: (Network) -> Unit, private val status: (String) -> Unit,
+                 private val failure: (UserIssue, Boolean) -> Unit) {
     private val cm = context.getSystemService(ConnectivityManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private val notify = Runnable { changed() }
@@ -35,10 +36,9 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), observer)
         watching = true
     }
-    fun request(profile: WifiProfile) {
+    fun request(profile: WifiProfile, interactive: Boolean = true) {
         require(profile.valid())
         releaseRequest()
-        val specifier = WifiNetworkSpecifier.Builder().setSsid(profile.ssid).setWpa2Passphrase(profile.password).build()
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { main.post {
                 if (requestCallback !== this) return@post
@@ -51,7 +51,7 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
                 if (requestCallback !== this) return@post
                 requesting = false; requestCallback = null
                 android.util.Log.i("ZfTransfer", "Wi-Fi profile request unavailable")
-                status("未能连接相机 Wi-Fi。请检查相机热点、名称和密码，或在系统设置中连接。")
+                failure(UserIssues.wifiUnavailable(), interactive)
             } }
             override fun onLost(network: Network) { main.post {
                 if (requestCallback !== this) return@post
@@ -61,13 +61,14 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
         }
         requestCallback = callback; requesting = true
         try {
+            val specifier = WifiNetworkSpecifier.Builder().setSsid(profile.ssid).setWpa2Passphrase(profile.password).build()
             cm.requestNetwork(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifier).build(), callback, 45000)
             status("等待系统确认连接相机 Wi-Fi…")
         } catch (e: Exception) {
             releaseRequest()
             // No exception details: OEM messages may contain credentials.
-            status("系统未接受 Wi-Fi 连接请求。请检查附近设备权限，或使用系统 Wi-Fi 设置。")
+            failure(UserIssues.from(e, UserOperation.WIFI), interactive)
         }
     }
     fun releaseRequest() {

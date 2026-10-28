@@ -1,1 +1,1 @@
-b030e092dbcc7106a74d3cc1f2416c47ef5bfa9adc413116276d9aa1bb7f589e  ZfTransfer-0.3.0-debug.apk
+09cc23dd2163c3146a0fc7d8160fdc8b272615b423b75ed6d01f6172fc27a0f4  ZfTransfer-0.3.3-debug.apk
