@@ -5,11 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.ConnectivityManager
-import android.net.wifi.WifiInfo
 import io.github.noisetta.nikonpull.ptp.*
-import java.net.Inet4Address
 
 /** Application-scoped state; the service owns connection lifetime, never a screen. */
 class ConnectionRuntime(private val context: android.content.Context) {
@@ -47,6 +43,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var serviceActive = false
     private val prefs = context.getSharedPreferences("transfers", 0)
     private val wifiStore = WifiProfileStore(context)
+    private val locator by lazy { CameraEndpointLocator(context, prefs, wifiStore) { cameraWifi.requestedNetwork } }
     val imports = ImportRepository(context.contentResolver, prefs, ::log)
     val transfers = TransferCoordinator(imports, TransferQueueStore(context.getSharedPreferences("transfer_queue", 0)))
     val cacheDir get() = context.cacheDir
@@ -83,7 +80,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private var issue: Pair<UserIssue, Boolean>? = null
     private val listeners = linkedSetOf<() -> Unit>()
     private val logs = ArrayDeque<String>()
-    private data class WifiEndpoint(val network: Network, val address: String, val caps: NetworkCapabilities)
     val cameraWifi = CameraWifi(context, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive ->
         if (!connectionReady) presentIssue(issue, interactive)
         else log("Ignoring obsolete Wi-Fi request failure; verified camera session is connected")
@@ -146,32 +142,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
             }
         }, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
     }
-    private fun wifiEndpoints(manual: String, only: Network? = null): List<WifiEndpoint> {
-        val cm = context.getSystemService(ConnectivityManager::class.java)
-        val candidates = if (only != null) listOf(only) else listOfNotNull(cameraWifi.requestedNetwork) + cm.allNetworks.toList()
-        return candidates.distinct().mapNotNull { network ->
-            val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
-            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@mapNotNull null
-            val links = cm.getLinkProperties(network) ?: return@mapNotNull null
-            val gateway = links.routes.asSequence().filter { it.isDefaultRoute }
-                .mapNotNull { (it.gateway as? Inet4Address)?.hostAddress }.firstOrNull { CameraAddress.isUsable(it) }
-                ?: if (android.os.Build.VERSION.SDK_INT >= 30) links.dhcpServerAddress?.hostAddress?.takeIf { CameraAddress.isUsable(it) } else null
-            val address = manual.ifEmpty { gateway ?: return@mapNotNull null }
-            WifiEndpoint(network, address, caps)
-        }
-    }
-    /** The SSID is hidden without the Wi-Fi permission, so a failed read is an expected "unknown". */
-    private fun ssidOf(caps: NetworkCapabilities) = runCatching { (caps.transportInfo as? WifiInfo)?.ssid }.getOrNull()
-    private fun cameraEndpoint(manual: String, only: Network? = null): WifiEndpoint? {
-        val endpoints = wifiEndpoints(manual, only)
-        val names = setOfNotNull(wifiStore.load()?.ssid, prefs.getString("last_camera_ssid", null))
-        val chosen = CameraNetworkSelector.select(endpoints.map {
-            CameraNetworkHint(it.network.networkHandle, it.address,
-                ssidOf(it.caps),
-                it.caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED), it.network == cameraWifi.requestedNetwork)
-        }, manual, prefs.getString("last_camera_address", "192.168.1.1").orEmpty(), names) ?: return null
-        return endpoints.firstOrNull { it.network.networkHandle == chosen.id }
-    }
     private fun maybeAutoConnect() {
         if (cameraWifi.requestedNetwork != null) wifiWasAvailable = true
         if ((!foreground && !lifetime.desired) || busy.get() || client != null || userStopped) return
@@ -181,7 +151,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         if (lifetime.desired && !lifetime.canReconnect(now())) return
         val manual = prefs.getString("host", "").orEmpty().trim()
         if (manual.isNotEmpty() && !CameraAddress.isUsable(manual)) return
-        val endpoint = cameraEndpoint(manual)
+        val endpoint = locator.find(manual)
         if (endpoint != null) {
             if (autoGate.take(endpoint.network.networkHandle, endpoint.address)) {
                 connectCamera(endpoint.network, automatic = true)
@@ -237,7 +207,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             report("请填写正确的 IPv4 地址，或清空后自动识别。")
             return
         }
-        val selectedEndpoint = cameraEndpoint(manual, networkOverride)
+        val selectedEndpoint = locator.find(manual, networkOverride)
         if (selectedEndpoint == null) {
             log("No camera Wi-Fi candidate; ordinary Wi-Fi was not probed")
             if (cameraWifi.requesting) {
@@ -269,45 +239,57 @@ class ConnectionRuntime(private val context: android.content.Context) {
         imageSession = java.util.UUID.randomUUID().toString()
         galleryPhotos.clear(); thumbs.evictAll(); importedHandles.clear(); completions.beginBatch(); revision++; changed()
         task(operation = UserOperation.CONNECT, silentErrors = automatic) {
-            session.disconnect()
-            val candidate = cameraEndpoint(manual, selectedEndpoint.network)
-                ?: error("Wi-Fi 尚未就绪：请保持连接相机热点，等待获取 IPv4 地址后重试")
-            val network = candidate.network
-            val address = candidate.address
-            sessionNetwork = network
-            log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
-            report("正在连接相机…")
-            val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
-                zfMode = true, log = ::log)
-            client = c
-            ensureConnecting(c)
-            c.connect()
-            ensureConnecting(c)
-            val info = c.getDeviceInfo()
-            ensureConnecting(c)
-            log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
-            val learnedSsid = ssidOf(candidate.caps)?.trim('"')
-            prefs.edit().putString("last_camera_address", address).apply {
-                if (!learnedSsid.isNullOrBlank() && learnedSsid != "<unknown ssid>") putString("last_camera_ssid", learnedSsid)
-            }.apply()
-            readyClient = c
-            ui {
-                // A user-selected system network already works: cancel a different, unfulfilled request.
-                if (client === c && cameraWifi.requesting && cameraWifi.requestedNetwork == null) cameraWifi.releaseRequest()
-            }
-            cameraName = info.displayName
-            cameraIdentity = info.serialNumber.takeIf { it.isNotBlank() }?.let { "${info.manufacturer}|${info.model}|$it" }
-            if (cameraIdentity == null) {
-                log("No stable serial: duplicate skipping disabled")
-                presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
-            }
-            // Zf may advertise a partial operation table: exercise read operations directly.
-            handles = c.listObjectHandles().asReversed()
-            cursor = 0
-            report("已连接 ${info.displayName}，正在读取照片…")
-            lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
+            val (c, info) = openSession(manual, selectedEndpoint.network)
+            announceCamera(c, info)
             loadPage(c)
         }
+    }
+    /** Dials the camera and verifies it answers; any stop request along the way aborts with "已停止连接". */
+    private fun openSession(manual: String, preferred: Network): Pair<PtpIpClient, CameraDeviceInfo> {
+        session.disconnect()
+        val candidate = locator.find(manual, preferred)
+            ?: error("Wi-Fi 尚未就绪：请保持连接相机热点，等待获取 IPv4 地址后重试")
+        val network = candidate.network
+        val address = candidate.address
+        sessionNetwork = network
+        log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
+        report("正在连接相机…")
+        val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
+            zfMode = true, log = ::log)
+        client = c
+        ensureConnecting(c)
+        c.connect()
+        ensureConnecting(c)
+        val info = c.getDeviceInfo()
+        ensureConnecting(c)
+        log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
+        rememberCamera(address, candidate)
+        readyClient = c
+        return c to info
+    }
+    private fun rememberCamera(address: String, candidate: WifiEndpoint) {
+        val learnedSsid = locator.ssidOf(candidate.caps)?.trim('"')
+        prefs.edit().putString("last_camera_address", address).apply {
+            if (!learnedSsid.isNullOrBlank() && learnedSsid != "<unknown ssid>") putString("last_camera_ssid", learnedSsid)
+        }.apply()
+    }
+    /** Publishes identity and the first handle list once the session is verified. */
+    private fun announceCamera(c: PtpIpClient, info: CameraDeviceInfo) {
+        ui {
+            // A user-selected system network already works: cancel a different, unfulfilled request.
+            if (client === c && cameraWifi.requesting && cameraWifi.requestedNetwork == null) cameraWifi.releaseRequest()
+        }
+        cameraName = info.displayName
+        cameraIdentity = info.serialNumber.takeIf { it.isNotBlank() }?.let { "${info.manufacturer}|${info.model}|$it" }
+        if (cameraIdentity == null) {
+            log("No stable serial: duplicate skipping disabled")
+            presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
+        }
+        // Zf may advertise a partial operation table: exercise read operations directly.
+        handles = c.listObjectHandles().asReversed()
+        cursor = 0
+        report("已连接 ${info.displayName}，正在读取照片…")
+        lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
     fun beginBrowseGesture() = pageReads.resetGesture()
     fun readPage(automatic: Boolean = false) {
@@ -353,39 +335,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
         }
         ui { message = "已加载 ${photos.size} 张照片${if (cursor < handles.size) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
     }
-    val mediumPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES) }
-    fun requestMediumPreview(photo: CameraObject, key: String, current: () -> Boolean, ready: (java.io.File?) -> Unit) {
-        worker.execute {
-            if (!current()) return@execute
-            var result: java.io.File? = null
-            val c = client
-            try {
-                result = mediumPreviews.findCompleted(key)
-                if (result == null && c != null) {
-                    for (fullHd in listOf(true, false)) {
-                        if (!current() || client !== c) break
-                        val bytes = try { c.getNikonPreview(photo.handle, fullHd) } catch (e: PtpResponseException) {
-                            log("Medium preview rejected fullHd=$fullHd: ${e.message}")
-                            continue
-                        }
-                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                        if (MediumPreviewPolicy.usable(bounds.outWidth, bounds.outHeight, bytes.size)) {
-                            result = mediumPreviews.store(key, bytes.size.toLong()) { it.write(bytes) }
-                            log("Medium preview bytes=${bytes.size} width=${bounds.outWidth} height=${bounds.outHeight}")
-                            break
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                log("Medium preview failed: ${e.stackTraceToString()}")
-                session.recoverAfterFailure()
-                if (client == null && !userStopped) lifetime.failed(now())
-            }
-            val completed = result
-            ui { if (current()) ready(completed) }
-        }
+    private val mediumFetcher by lazy {
+        MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
+            onSessionLost = { if (client == null && !userStopped) lifetime.failed(now()) }, ui = ::ui)
     }
+    val mediumPreviews get() = mediumFetcher.cache
+    fun requestMediumPreview(photo: CameraObject, key: String, current: () -> Boolean, ready: (java.io.File?) -> Unit) =
+        mediumFetcher.request(photo, key, current, ready)
     /** Evidence ownership stays here; screens never rewrite the shared imported set. */
     fun refreshImportEvidence() {
         if (busy.get()) return
