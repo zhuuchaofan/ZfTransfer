@@ -24,12 +24,12 @@ class PhotoPreviewController(
     private val photos get() = previewPhotos
     private var filterAtOpen = PhotoFilter.ALL
     private var formatAtOpen = MediaFormat.ALL
-    private val imported get() = runtime.imported
+    private val imported get() = runtime.gallery.imported
     private val busy get() = runtime.busy
     private val client get() = runtime.client
-    private val imageSession get() = runtime.imageSession
-    private val handles get() = runtime.handles
-    private val cursor get() = runtime.cursor
+    private val imageSession get() = runtime.gallery.imageSession
+    private val handles get() = runtime.gallery.handles
+    private val cursor get() = runtime.gallery.cursor
     private val originalPreviews get() = images.originals
     var index = 0
         private set
@@ -186,7 +186,7 @@ class PhotoPreviewController(
     }
     fun refresh() {
         if (preview?.isShowing != true) return
-        previewPhotos=PhotoCatalog.appendPreview(previewPhotos,runtime.photos,imported,filterAtOpen,formatAtOpen)
+        previewPhotos=PhotoCatalog.appendPreview(previewPhotos,runtime.gallery.photos,imported,filterAtOpen,formatAtOpen)
         refreshActions()
         updateOriginalAction()
         previewStrip.submit(photos, index, ::thumbnail, ::show)

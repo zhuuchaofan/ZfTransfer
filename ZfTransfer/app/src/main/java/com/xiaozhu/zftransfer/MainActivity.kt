@@ -33,7 +33,7 @@ class MainActivity : Activity() {
     private var profileAttempted: Boolean
         get() = runtime.profileAttempted
         set(value) { runtime.profileAttempted = value }
-    private val imageSession get() = runtime.imageSession
+    private val imageSession get() = runtime.gallery.imageSession
     private val client get() = runtime.client
     @Volatile private var stopped = false
     private lateinit var status: TextView
@@ -46,7 +46,7 @@ class MainActivity : Activity() {
     private lateinit var emptyTitle: TextView
     private lateinit var emptyHint: TextView
     private val cameraName get() = runtime.cameraName
-    private val photos get() = runtime.photos
+    private val photos get() = runtime.gallery.photos
     private var visiblePhotos = emptyList<CameraObject>()
     private var activeFilter = PhotoFilter.ALL
     private var activeFormat = MediaFormat.ALL
@@ -66,7 +66,7 @@ class MainActivity : Activity() {
             screen.renderFilter(activeFilter, localGallery.size, true); updateGalleryControls()
         }
     } }
-    private val imported get() = runtime.imported
+    private val imported get() = runtime.gallery.imported
     private var selectionMode = false
     private var range: RangeSelection? = null
     private var issueDialog: Dialog? = null
@@ -88,8 +88,8 @@ class MainActivity : Activity() {
     private lateinit var progress: ProgressBar
     private val selected = linkedMapOf<Long, CameraObject>()
 
-    private val handles get() = runtime.handles
-    private val cursor get() = runtime.cursor
+    private val handles get() = runtime.gallery.handles
+    private val cursor get() = runtime.gallery.cursor
     private val imports get() = runtime.imports
     private val cameraIdentity get() = runtime.cameraIdentity
     private var completionCursor = 0L
@@ -121,7 +121,7 @@ class MainActivity : Activity() {
         }
         if (renderedRevision != runtime.revision) {
             renderedRevision = runtime.revision
-            val completed = runtime.completedSince(completionCursor)
+            val completed = runtime.gallery.completions.since(completionCursor)
             selected.keys.removeAll(completed.map { it.handle }.toSet())
             if (completed.isNotEmpty()) {
                 completionCursor = completed.last().sequence

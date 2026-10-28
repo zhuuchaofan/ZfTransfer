@@ -52,19 +52,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
         get() = imports.identity
         set(value) { imports.identity = value }
     @Volatile var cameraName = "Nikon Zf"
-    private val galleryPhotos = mutableListOf<CameraObject>()
-    val photos: List<CameraObject> get() = galleryPhotos
-    private val importedHandles = mutableSetOf<Long>()
-    val imported: Set<Long> get() = importedHandles
-    private val completions = ImportCompletions()
-    fun completedSince(cursor: Long) = completions.since(cursor)
-    private val pageReads = PageReadGate()
+    val gallery = GalleryState()
     val thumbs = object : android.util.LruCache<Long, Bitmap>(THUMB_CACHE_BYTES) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
-    @Volatile var imageSession = java.util.UUID.randomUUID().toString()
-    var handles = emptyList<Long>()
-    @Volatile var cursor = 0
     var message = ""
     var taskState = TaskState()
         private set
@@ -93,7 +84,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         android.util.Log.i("ZfTransfer", message)
     }
     @Synchronized fun logText() = logs.joinToString("\n")
-    fun thumbnailFile(handle: Long, session: String = imageSession) = java.io.File(cacheDir, "thumb_${session}_$handle.jpg")
+    fun thumbnailFile(handle: Long, session: String = gallery.imageSession) = java.io.File(cacheDir, "thumb_${session}_$handle.jpg")
     private fun savedExists(obj: CameraObject) = imports.verifiedUri(obj) != null
     private fun duplicateKey(obj: CameraObject) = imports.key(obj)
     private fun wifiPermission() = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.NEARBY_WIFI_DEVICES" else "android.permission.ACCESS_FINE_LOCATION"
@@ -227,8 +218,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             return
         }
         cacheDir.listFiles()?.filter { it.name.startsWith("thumb_") && it.name.endsWith(".jpg") }?.forEach { it.delete() }
-        imageSession = java.util.UUID.randomUUID().toString()
-        galleryPhotos.clear(); thumbs.evictAll(); importedHandles.clear(); completions.beginBatch(); revision++; changed()
+        gallery.reset(); thumbs.evictAll(); revision++; changed()
         task(operation = UserOperation.CONNECT, silentErrors = automatic) {
             val (c, info) = openSession(manual, selectedEndpoint.network)
             announceCamera(c, info)
@@ -277,23 +267,22 @@ class ConnectionRuntime(private val context: android.content.Context) {
             presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
         }
         // Zf may advertise a partial operation table: exercise read operations directly.
-        handles = c.listObjectHandles().asReversed()
-        cursor = 0
+        gallery.startBrowse(c.listObjectHandles().asReversed())
         report("已连接 ${info.displayName}，正在读取照片…")
         lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
-    fun beginBrowseGesture() = pageReads.resetGesture()
+    fun beginBrowseGesture() = gallery.beginBrowseGesture()
     fun readPage(automatic: Boolean = false) {
-        if (!pageReads.request(imageSession, cursor, handles.size, busy.get(), client != null, automatic)) return
+        if (!gallery.admitPage(busy.get(), client != null, automatic)) return
         task { loadPage(client ?: error("请先连接相机")) }
     }
     private fun loadPage(c: PtpIpClient) {
-        val pageSession = imageSession
-        val end = minOf(cursor + PAGE_SIZE, handles.size)
-        while (cursor < end) {
+        val pageSession = gallery.imageSession
+        val end = minOf(gallery.cursor + PAGE_SIZE, gallery.handles.size)
+        while (gallery.cursor < end) {
             check(client === c) { "已停止读取" }
-            val obj = c.getObjectInfo(handles[cursor])
-            cursor++
+            val obj = c.getObjectInfo(gallery.handles[gallery.cursor])
+            gallery.advance()
             if (obj.isJpeg) {
                 val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpResponseException) {
                     // A PTP error has a fully consumed response; transport errors abort the task.
@@ -314,17 +303,15 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     .onFailure { log("Thumbnail cache write failed: ${it.javaClass.simpleName}: ${it.message}") }
                 val exists = savedExists(obj)
                 ui {
-                    if (pageSession != imageSession) return@ui
-                    galleryPhotos.add(obj)
+                    if (!gallery.add(pageSession, obj, exists)) return@ui
                     if (bitmap != null) thumbs.put(obj.handle, bitmap)
-                    if (exists) importedHandles.add(obj.handle)
                     revision++; changed()
                 }
 
             }
             report("正在读取照片…")
         }
-        ui { message = "已加载 ${photos.size} 张照片${if (cursor < handles.size) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
+        ui { message = "已加载 ${gallery.photos.size} 张照片${if (gallery.hasMore) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
     }
     private val mediumFetcher by lazy {
         MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
@@ -336,25 +323,25 @@ class ConnectionRuntime(private val context: android.content.Context) {
     /** Evidence ownership stays here; screens never rewrite the shared imported set. */
     fun refreshImportEvidence() {
         if (busy.get()) return
-        val snapshot = photos.toList()
+        val snapshot = gallery.photos.toList()
         val identity = cameraIdentity
-        val session = imageSession
+        val session = gallery.imageSession
         worker.execute {
             val verified = snapshot.filter { savedExists(it) }.map { it.handle }.toSet()
             ui {
-                if (!busy.get() && identity == cameraIdentity && session == imageSession) {
-                    importedHandles.removeAll(snapshot.map { it.handle }.toSet()); importedHandles.addAll(verified); revision++; changed()
+                if (!busy.get() && identity == cameraIdentity && session == gallery.imageSession) {
+                    gallery.replaceEvidence(snapshot.map { it.handle }, verified); revision++; changed()
                 }
             }
         }
     }
     fun checkImported(items: List<CameraObject>, ready: (Set<Long>) -> Unit) {
-        val session = imageSession
+        val session = gallery.imageSession
         var duplicates: Set<Long>? = null
         task(operation = UserOperation.IMPORT, onComplete = {
             val checked = duplicates
-            if (checked != null && client != null && session == imageSession) {
-                items.forEach { if (it.handle in checked) importedHandles.add(it.handle) else importedHandles.remove(it.handle) }
+            if (checked != null && client != null && session == gallery.imageSession) {
+                items.forEach { gallery.markImported(it.handle, it.handle in checked) }
                 revision++; changed()
                 ready(checked)
             }
@@ -362,7 +349,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
         if (items.isEmpty() || busy.get()) return
-        completions.beginBatch()
+        gallery.completions.beginBatch()
         task(operation = UserOperation.IMPORT) {
             val c = client ?: error("请先连接相机")
             val (done, skipped) = transfers.run(c, items, skipExisting, retry,
@@ -371,8 +358,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
                     ui { taskState = TaskState(UserOperation.IMPORT, ImportProgress(obj.handle, percentage.coerceIn(0, 100))); changed() }
                 }, completed = { obj, verified -> ui {
-                    completions.record(obj.handle)
-                    if (verified) importedHandles.add(obj.handle) else importedHandles.remove(obj.handle)
+                    gallery.completions.record(obj.handle)
+                    gallery.markImported(obj.handle, verified)
                     revision++; changed()
                 } })
             report("已导入 $done 张，跳过 $skipped 张。已保存到手机相册。")

@@ -22,7 +22,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
     val originals = OriginalPreviewCache(File(cacheDir, "original_previews"))
     private fun file(handle: Long, session: String) = File(cacheDir, "thumb_${session}_$handle.jpg")
     fun key(obj: CameraObject) = runtime.imports.key(obj)
-        ?: "${runtime.imageSession}|${obj.storageId}|${obj.handle}|${obj.filename}|${obj.captureDate}|${obj.size}"
+        ?: "${runtime.gallery.imageSession}|${obj.storageId}|${obj.handle}|${obj.filename}|${obj.captureDate}|${obj.size}"
     private fun decode(source: ImageDecoder.Source, maxEdge: Int): Bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
         val scale = minOf(1.0, maxEdge.toDouble() / maxOf(info.size.width, info.size.height))
         decoder.setTargetSize(maxOf(1, (info.size.width * scale).toInt()), maxOf(1, (info.size.height * scale).toInt()))
@@ -32,7 +32,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
     fun thumbnail(handle: Long): Bitmap? {
         runtime.thumbs.get(handle)?.let { return it }
         if (closed) return null
-        val session = runtime.imageSession
+        val session = runtime.gallery.imageSession
         val request = "$session|$handle"
         if (pending.add(request)) worker.execute {
             val bitmap = runCatching {
@@ -41,7 +41,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
             main.post {
                 pending.remove(request)
                 if (bitmap != null) {
-                    if (!closed && session == runtime.imageSession) {
+                    if (!closed && session == runtime.gallery.imageSession) {
                         if (runtime.thumbs.get(handle) == null) { runtime.thumbs.put(handle, bitmap); changed() }
                         else bitmap.recycle()
                     } else bitmap.recycle()
@@ -53,18 +53,18 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
     fun upgradeGrid(obj: CameraObject, recordKey: String?, session: String) {
         if (closed) return
         worker.execute {
-            if (closed || runtime.imageSession != session) return@execute
+            if (closed || runtime.gallery.imageSession != session) return@execute
             val uri = runtime.imports.verifiedUri(obj, recordKey) ?: return@execute
             val bitmap = runCatching { decode(ImageDecoder.createSource(resolver, uri), 512) }
                 .logFailure("Grid upgrade decode failed").getOrNull() ?: return@execute
-            if (closed || runtime.imageSession != session) { bitmap.recycle(); return@execute }
+            if (closed || runtime.gallery.imageSession != session) { bitmap.recycle(); return@execute }
             runCatching { file(obj.handle, session).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it) } }
                 .logFailure("Grid thumbnail cache write failed")
             main.post { publishThumbnail(obj.handle, session, bitmap) }
         }
     }
     private fun publishThumbnail(handle: Long, session: String, bitmap: Bitmap) {
-        if (!closed && session == runtime.imageSession) { runtime.thumbs.put(handle, bitmap); changed() }
+        if (!closed && session == runtime.gallery.imageSession) { runtime.thumbs.put(handle, bitmap); changed() }
         else bitmap.recycle()
     }
     fun loadPreview(obj: CameraObject, current: () -> Boolean, ready: (Preview?) -> Unit) {
@@ -72,7 +72,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
     }
     private fun loadPreview(obj: CameraObject, current: () -> Boolean, ready: (Preview?) -> Unit, allowFetch: Boolean) {
         if (closed) return
-        val session = runtime.imageSession
+        val session = runtime.gallery.imageSession
         val key = key(obj)
         val recordKey = runtime.imports.key(obj)
         worker.execute {
@@ -93,7 +93,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
                 val scale = 512.0 / maxOf(it.width, it.height)
                 Bitmap.createScaledBitmap(it, maxOf(1, (it.width * scale).toInt()), maxOf(1, (it.height * scale).toInt()), true)
             }
-            if (grid != null && !closed && session == runtime.imageSession) runCatching {
+            if (grid != null && !closed && session == runtime.gallery.imageSession) runCatching {
                 file(obj.handle, session).outputStream().use { grid.compress(Bitmap.CompressFormat.JPEG, 94, it) }
             }.logFailure("Preview thumbnail cache write failed")
             main.post {
@@ -104,7 +104,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
                     original != null -> "原图预览 · 双击或双指缩放"
                     else -> "清晰预览 · 双击或双指缩放"
                 })) else if (allowFetch) {
-                    runtime.requestMediumPreview(obj, key, { !closed && current() && session == runtime.imageSession }) { result ->
+                    runtime.requestMediumPreview(obj, key, { !closed && current() && session == runtime.gallery.imageSession }) { result ->
                         if (!closed && current()) {
                             if (result != null) loadPreview(obj, current, ready, allowFetch = false) else ready(null)
                         }
