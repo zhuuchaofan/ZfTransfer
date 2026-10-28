@@ -133,7 +133,8 @@ class MainActivity : Activity() {
         }
         if (resumed) {
             runtime.takeIssue()?.let { presentIssue(it.first, it.second) }
-            if (runtime.serviceActive && android.os.Build.VERSION.SDK_INT >= 33 && hasWindowFocus() &&
+            // Wait for the camera Wi-Fi request: a second dialog now would cover the system's connect dialog.
+            if (runtime.serviceActive && android.os.Build.VERSION.SDK_INT >= 33 && hasWindowFocus() && !cameraWifi.requesting &&
                 checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED &&
                 !prefs.getBoolean("notification_permission_asked", false)) {
                 prefs.edit().putBoolean("notification_permission_asked", true).apply()
