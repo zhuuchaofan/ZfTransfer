@@ -234,6 +234,7 @@ class MainActivity : Activity() {
         sheet.row("后台连接设置") {
             showIssuePanel(UserIssue("保持后台连接", "允许通知，并将应用省电策略设为「无限制」，以便熄屏后保持连接。持续连接会增加手机和相机耗电，实际效果也受相机无线设置影响。", Recovery.APP_SETTINGS), "打开应用设置")
         }
+        sheet.row("检查更新") { showUpdateCheck() }
         sheet.row("关于") { showLicense() }
         sheet.row("忘记相机 Wi-Fi") {
             newSheet("忘记相机 Wi-Fi？").apply {
@@ -480,6 +481,33 @@ class MainActivity : Activity() {
         retryTransfer.isEnabled = !busy.get() && client != null
     }
     private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) = runtime.startImport(items, skipExisting, retry)
+    private var updates: UpdateChecker? = null
+    private fun installedVersion() = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+    private fun openLink(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure { showNotice("无法打开浏览器", "请在浏览器中手动访问：$url") }
+    }
+    private fun showUpdateCheck() {
+        val installed = installedVersion()
+        val current = AppVersion.parse(installed)
+        val sheet = newSheet("检查更新")
+        if (current == null) { sheet.message("无法识别当前版本号（$installed）。"); sheet.action("关闭"); sheet.show(); return }
+        val status = sheet.message("正在检查最新版本…")
+        sheet.show()
+        val checker = updates ?: UpdateChecker("ZfTransfer/$installed").also { updates = it }
+        checker.check(current) { result -> ui {
+            if (!sheet.isShowing) return@ui
+            when (result) {
+                is UpdateResult.Available -> {
+                    status.text = "发现新版本 ${result.version}（当前 $current）。点击前往 GitHub 下载页，下载后在手机上打开即可升级。"
+                    sheet.action("前往下载", true) { openLink(ReleaseFeed.pageFor(result.version)) }
+                }
+                UpdateResult.UpToDate -> status.text = "当前版本 $current，已是最新版本。"
+                is UpdateResult.Failed -> status.text = "无法检查更新：${result.reason}。"
+            }
+            sheet.action("关闭")
+        } }
+    }
     private fun showLicense() {
         newSheet("关于 Zf 传图").apply {
             message("版本 ${packageManager.getPackageInfo(packageName,0).versionName?.removeSuffix("-test")}\n遵循 GPL-3.0 开源许可证。\n基于 noisetta/Nikon-Pull 与 jaminxx-aha/ZPill 构建。\n源代码：github.com/zhuuchaofan/ZfTransfer")
@@ -494,7 +522,7 @@ class MainActivity : Activity() {
         previewController.close()
         sheets.toList().forEach { it.dismiss() }
         runtime.detach(runtimeListener)
-        images.close(); localGallery.close()
+        images.close(); localGallery.close(); updates?.close()
         super.onDestroy()
     }
 }

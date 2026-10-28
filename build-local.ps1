@@ -32,7 +32,7 @@ $junit = Join-Path $Studio 'lib\junit4.jar'
 $hamcrest = Join-Path $Studio 'lib\testFramework.jar'
 & "$kotlin\bin\kotlinc.bat" @sources @tests -classpath "$android;$junit" -jvm-target 17 -d "$out\tests.jar"
 Check-Step
-& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest | Tee-Object "$out\tests.txt"
+& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest com.xiaozhu.zftransfer.UpdateCheckerTest | Tee-Object "$out\tests.txt"
 Check-Step
 & "$kotlin\bin\kotlinc.bat" @sources -classpath $android -jvm-target 17 -d "$out\classes.jar"
 Check-Step
