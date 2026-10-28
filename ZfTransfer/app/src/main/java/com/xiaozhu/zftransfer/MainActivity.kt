@@ -34,15 +34,15 @@ class MainActivity : Activity() {
     private val imageSession get() = runtime.gallery.imageSession
     private val client get() = runtime.client
     @Volatile private var stopped = false
-    private lateinit var status: TextView
-    private lateinit var grid: PhotoGrid
-    private lateinit var selectionLabel: TextView
-    private lateinit var cameraLabel: TextView
-    private lateinit var selectAll: TextView
-    private lateinit var cancelSelection: TextView
-    private lateinit var footer: LinearLayout
-    private lateinit var emptyTitle: TextView
-    private lateinit var emptyHint: TextView
+    private val status get() = screen.status
+    private val grid get() = screen.grid
+    private val selectionLabel get() = screen.selectionLabel
+    private val cameraLabel get() = screen.cameraLabel
+    private val selectAll get() = screen.selectAll
+    private val cancelSelection get() = screen.cancelSelection
+    private val footer get() = screen.footer
+    private val emptyTitle get() = screen.emptyTitle
+    private val emptyHint get() = screen.emptyHint
     private val cameraName get() = runtime.cameraName
     private val photos get() = runtime.gallery.photos
     private var visiblePhotos = emptyList<CameraObject>()
@@ -60,7 +60,7 @@ class MainActivity : Activity() {
         screen.renderFilter(activeFilter, if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size, true)
     }
     private val localGallery: LocalImportGallery by lazy { LocalImportGallery(this) {
-        if (!stopped && activeFilter == PhotoFilter.IMPORTED && ::grid.isInitialized) {
+        if (!stopped && activeFilter == PhotoFilter.IMPORTED && ::screen.isInitialized) {
             screen.renderFilter(activeFilter, localGallery.size, true); updateGalleryControls()
         }
     } }
@@ -77,12 +77,12 @@ class MainActivity : Activity() {
         override fun getItemId(position: Int) = visiblePhotos[position].handle
         override fun getView(position: Int, recycled: View?, parent: ViewGroup): View = photoCell(visiblePhotos[position])
     }
-    private lateinit var connect: Button
-    private lateinit var more: Button
-    private lateinit var retryTransfer: Button
-    private lateinit var download: Button
+    private val connect get() = screen.connect
+    private val more get() = screen.more
+    private val retryTransfer get() = screen.retryTransfer
+    private val download get() = screen.download
     private val transfers get() = runtime.transfers
-    private lateinit var progress: ProgressBar
+    private val progress get() = screen.progress
     private val selected = linkedMapOf<Long, CameraObject>()
 
     private val handles get() = runtime.gallery.handles
@@ -102,7 +102,7 @@ class MainActivity : Activity() {
     private fun thumbnail(handle: Long) = images.thumbnail(handle)
     private val runtimeListener: () -> Unit = { renderRuntime() }
     private fun renderRuntime() {
-        if (stopped || !::status.isInitialized) return
+        if (stopped || !::screen.isInitialized) return
         status.text = runtime.message
         status.visibility = if (runtime.message.isEmpty() || (!runtime.taskState.running && runtime.connectionReady)) View.GONE else View.VISIBLE
         progress.progress = runtime.progress
@@ -179,8 +179,8 @@ class MainActivity : Activity() {
 
             override fun wifiProfile() = showWifiProfile()
             override fun wifiSettings() { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            override fun readMore() = readPage()
-            override fun importSelected() = downloadSelected()
+            override fun readMore() = runtime.readPage()
+            override fun importSelected() = requestImport(selected.values.toList())
             override fun retry() {
                 if (!transfers.queue.canRetry(cameraIdentity)) showNotice("请连接原来的相机", "未完成任务属于原相机，请连接原相机后再重试。")
                 else startImport(transfers.queue.remaining, true, retry = true)
@@ -189,22 +189,8 @@ class MainActivity : Activity() {
         screen.localAccess.setOnClickListener {
             requestPermissions(arrayOf(if(android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"),43)
         }
-        status = screen.status
-        grid = screen.grid
         grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED && activeFormat.available) runtime.readPage(automatic = true) }
         grid.onBrowseGesture = runtime.gallery::beginBrowseGesture
-        selectionLabel = screen.selectionLabel
-        cameraLabel = screen.cameraLabel
-        selectAll = screen.selectAll
-        cancelSelection = screen.cancelSelection
-        footer = screen.footer
-        emptyTitle = screen.emptyTitle
-        emptyHint = screen.emptyHint
-        connect = screen.connect
-        more = screen.more
-        download = screen.download
-        progress = screen.progress
-        retryTransfer = screen.retryTransfer
         setContentView(screen.root)
         updateRetryControl()
         runtime.attach(runtimeListener)
@@ -336,7 +322,7 @@ class MainActivity : Activity() {
         runtime.watch()
         renderRuntime()
         cameraWifi.schedule()
-        if (!::grid.isInitialized || busy.get()) return
+        if (!::screen.isInitialized || busy.get()) return
         runtime.refreshImportEvidence()
         if(activeFilter==PhotoFilter.IMPORTED) localGallery.reload()
     }
@@ -383,10 +369,8 @@ class MainActivity : Activity() {
     private fun report(message: String) { ui { status.text = message; status.setTextColor(muted); status.visibility = View.VISIBLE } }
     private fun setBusy(value: Boolean) {
         connect.isEnabled = !value
-        more.isEnabled = !value && client != null && cursor < handles.size
-        download.isEnabled = !value && client != null && selected.isNotEmpty()
-        more.alpha = if (more.isEnabled) 1f else 0.4f
-        download.alpha = if (download.isEnabled) 1f else 0.4f
+        setEnabledDimmed(more, !value && client != null && cursor < handles.size)
+        setEnabledDimmed(download, !value && client != null && selected.isNotEmpty())
         previewController.refreshActions()
         grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED && activeFormat.available
         grid.canReadMore = activeFormat.available && activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
@@ -403,19 +387,22 @@ class MainActivity : Activity() {
         updateRetryControl()
     }
     private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) = runtime.connectCamera(networkOverride, automatic)
-    private fun readPage() = runtime.readPage()
     private fun updateSelection() {
         previewController.refreshActions()
         download.text = if (selected.isEmpty()) "导入原图" else "导入原图（${selected.size}）"
-        download.isEnabled = selected.isNotEmpty() && client != null && !busy.get()
-        download.alpha = if (download.isEnabled) 1f else 0.4f
+        setEnabledDimmed(download, selected.isNotEmpty() && client != null && !busy.get())
         val hidden = selected.keys.count { handle -> visiblePhotos.none { it.handle==handle } }
         selectionLabel.text = if (selected.isEmpty()) "长按滑动多选" else "已选 ${selected.size} 张 · ${"%.1f".format(selected.values.sumOf { it.size } / 1048576.0)} MB" + if(hidden>0) "\n含其他筛选 $hidden 张" else ""
         updateGalleryControls()
         adapter.notifyDataSetChanged()
     }
+    private fun hideCameraControls() {
+        listOf(footer, selectAll, cancelSelection, more, screen.connectionActions, screen.emptyReadMore, progress, status)
+            .forEach { it.visibility = View.GONE }
+    }
+    private fun setEnabledDimmed(button: View, enabled: Boolean) { button.isEnabled = enabled; button.alpha = if (enabled) 1f else 0.4f }
     private fun updateGalleryControls() {
-        if (!::footer.isInitialized) return
+        if (!::screen.isInitialized) return
         val local=activeFilter==PhotoFilter.IMPORTED
         screen.formatControl.text="格式：${activeFormat.label} ▾"
         screen.catalogSummary.visibility=if(!local && runtime.connectionReady) View.VISIBLE else View.GONE
@@ -423,17 +410,13 @@ class MainActivity : Activity() {
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
         if(!activeFormat.available) {
-            footer.visibility=View.GONE;selectAll.visibility=View.GONE;cancelSelection.visibility=View.GONE
-            more.visibility=View.GONE;screen.connectionActions.visibility=View.GONE;screen.emptyReadMore.visibility=View.GONE
-            screen.localAccess.visibility=View.GONE;status.visibility=View.GONE;progress.visibility=View.GONE
+            hideCameraControls();screen.localAccess.visibility=View.GONE
             emptyTitle.text="${activeFormat.label} · 后续支持"
             emptyHint.text="该格式的浏览和导入尚未开放，可切换为 JPEG 或全部格式"
             return
         }
         if(local) {
-            footer.visibility=View.GONE;selectAll.visibility=View.GONE;cancelSelection.visibility=View.GONE
-            more.visibility=View.GONE;screen.connectionActions.visibility=View.GONE;screen.emptyReadMore.visibility=View.GONE
-            progress.visibility=View.GONE;status.visibility=View.GONE
+            hideCameraControls()
             emptyTitle.text=if(localGallery.loading) "正在检查手机照片" else "暂无已导入照片"
             emptyHint.text="已保存到手机的照片会显示在这里，无需连接相机"
             return
@@ -488,11 +471,8 @@ class MainActivity : Activity() {
             action("取消");show()
         }
     }
-    private fun downloadSelected() {
-        requestImport(selected.values.toList())
-    }
     private fun updateRetryControl() {
-        if (!::retryTransfer.isInitialized) return
+        if (!::screen.isInitialized) return
         val count = transfers.queue.remaining.size
         retryTransfer.visibility = if (runtime.taskState.showRemaining(count)) View.VISIBLE else View.GONE
         retryTransfer.text = "继续导入未完成的 $count 张"
