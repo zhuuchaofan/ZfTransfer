@@ -6,7 +6,7 @@ import android.content.SharedPreferences
 class TransferQueueStore(private val prefs: SharedPreferences) {
     fun load(): TransferQueue = runCatching {
         prefs.getString("pending", null)?.let(TransferQueueCodec::decode) ?: TransferQueue()
-    }.getOrElse { TransferQueue() }
+    }.logFailure("Transfer queue unreadable, starting empty").getOrElse { TransferQueue() }
 
     fun save(queue: TransferQueue) {
         val edit = prefs.edit()

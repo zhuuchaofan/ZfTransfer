@@ -111,7 +111,10 @@ data class CameraDeviceInfo(
     }
 }
 
-class PtpException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class PtpException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** The camera answered with a non-OK response code; the response was fully consumed, so the session stays usable. */
+class PtpResponseException(message: String) : PtpException(message)
 
 data class TransferProgress(
     val bytesTransferred: Long,

@@ -37,7 +37,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
         if (pending.add(request)) worker.execute {
             val bitmap = runCatching {
                 file(handle, session).takeIf { it.isFile }?.let { decode(ImageDecoder.createSource(it), 1024) }
-            }.getOrNull()
+            }.logFailure("Cached thumbnail decode failed").getOrNull()
             main.post {
                 pending.remove(request)
                 if (bitmap != null) {
@@ -55,9 +55,11 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
         worker.execute {
             if (closed || runtime.imageSession != session) return@execute
             val uri = runtime.imports.verifiedUri(obj, recordKey) ?: return@execute
-            val bitmap = runCatching { decode(ImageDecoder.createSource(resolver, uri), 512) }.getOrNull() ?: return@execute
+            val bitmap = runCatching { decode(ImageDecoder.createSource(resolver, uri), 512) }
+                .logFailure("Grid upgrade decode failed").getOrNull() ?: return@execute
             if (closed || runtime.imageSession != session) { bitmap.recycle(); return@execute }
             runCatching { file(obj.handle, session).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 94, it) } }
+                .logFailure("Grid thumbnail cache write failed")
             main.post { publishThumbnail(obj.handle, session, bitmap) }
         }
     }
@@ -93,7 +95,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
             }
             if (grid != null && !closed && session == runtime.imageSession) runCatching {
                 file(obj.handle, session).outputStream().use { grid.compress(Bitmap.CompressFormat.JPEG, 94, it) }
-            }
+            }.logFailure("Preview thumbnail cache write failed")
             main.post {
                 if (grid != null) publishThumbnail(obj.handle, session, grid)
                 if (closed || !current()) { bitmap?.recycle(); return@post }

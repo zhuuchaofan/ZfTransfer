@@ -341,7 +341,7 @@ class PtpIpClient(
                     requireTransaction(reader.u32(), transactionId)
                     log("response=0x${responseCode.toString(16)} bytes=$bytesTransferred")
                     if (responseCode != RESPONSE_OK) {
-                        throw PtpException(
+                        throw PtpResponseException(
                             "Camera returned PTP error 0x${responseCode.toString(16).uppercase()} " +
                                 "for operation 0x${operationCode.toString(16).uppercase()}",
                         )

@@ -37,7 +37,7 @@ class WifiProfileStore(context: Context) {
             updateAAD(ssid.toByteArray(Charsets.UTF_8))
         }
         WifiProfile(ssid, String(cipher.doFinal(encrypted), Charsets.UTF_8)).takeIf { it.valid() }
-    }.getOrNull()
+    }.logFailure("Saved Wi-Fi profile unreadable").getOrNull()
     fun save(profile: WifiProfile) {
         require(profile.valid())
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {

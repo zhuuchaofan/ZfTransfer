@@ -13,6 +13,16 @@ import java.net.Inet4Address
 
 /** Application-scoped state; the service owns connection lifetime, never a screen. */
 class ConnectionRuntime(private val context: android.content.Context) {
+    private companion object {
+        const val HEARTBEAT_SECONDS = 15L
+        const val FOREGROUND_SETTLE_MS = 1800L // Let the system finish joining the camera Wi-Fi before probing.
+        const val WIFI_REQUEST_RETRY_MS = 60_000L
+        const val PAGE_SIZE = 40
+        const val GRID_THUMB_EDGE = 1024
+        const val LOG_LIMIT = 400
+        const val THUMB_CACHE_BYTES = 16 * 1024 * 1024
+        const val MEDIUM_PREVIEW_CACHE_BYTES = 48L * 1024 * 1024
+    }
     val session = CameraSession()
     val lifetime = ConnectionLifetime()
     val autoGate = AutoConnectGate()
@@ -59,7 +69,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private val completions = ImportCompletions()
     fun completedSince(cursor: Long) = completions.since(cursor)
     private val pageReads = PageReadGate()
-    val thumbs = object : android.util.LruCache<Long, Bitmap>(16 * 1024 * 1024) {
+    val thumbs = object : android.util.LruCache<Long, Bitmap>(THUMB_CACHE_BYTES) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
     }
     @Volatile var imageSession = java.util.UUID.randomUUID().toString()
@@ -89,7 +99,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         ui { issue = value to interactive; message = value.title + "\n" + value.message; changed() }
     }
     @Synchronized fun log(message: String) {
-        if (logs.size >= 400) logs.removeFirst()
+        if (logs.size >= LOG_LIMIT) logs.removeFirst()
         logs.addLast("${java.time.LocalTime.now().withNano(0)} $message")
         android.util.Log.i("ZfTransfer", message)
     }
@@ -134,7 +144,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     if (lifetime.canReconnect(now())) { autoGate.reset(); maybeAutoConnect() }
                 }
             }
-        }, 15, 15, java.util.concurrent.TimeUnit.SECONDS)
+        }, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
     }
     private fun wifiEndpoints(manual: String, only: Network? = null): List<WifiEndpoint> {
         val cm = context.getSystemService(ConnectivityManager::class.java)
@@ -150,12 +160,14 @@ class ConnectionRuntime(private val context: android.content.Context) {
             WifiEndpoint(network, address, caps)
         }
     }
+    /** The SSID is hidden without the Wi-Fi permission, so a failed read is an expected "unknown". */
+    private fun ssidOf(caps: NetworkCapabilities) = runCatching { (caps.transportInfo as? WifiInfo)?.ssid }.getOrNull()
     private fun cameraEndpoint(manual: String, only: Network? = null): WifiEndpoint? {
         val endpoints = wifiEndpoints(manual, only)
         val names = setOfNotNull(wifiStore.load()?.ssid, prefs.getString("last_camera_ssid", null))
         val chosen = CameraNetworkSelector.select(endpoints.map {
             CameraNetworkHint(it.network.networkHandle, it.address,
-                runCatching { (it.caps.transportInfo as? WifiInfo)?.ssid }.getOrNull(),
+                ssidOf(it.caps),
                 it.caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED), it.network == cameraWifi.requestedNetwork)
         }, manual, prefs.getString("last_camera_address", "192.168.1.1").orEmpty(), names) ?: return null
         return endpoints.firstOrNull { it.network.networkHandle == chosen.id }
@@ -163,7 +175,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private fun maybeAutoConnect() {
         if (cameraWifi.requestedNetwork != null) wifiWasAvailable = true
         if ((!foreground && !lifetime.desired) || busy.get() || client != null || userStopped) return
-        val settling = if (foreground) 1800L - (android.os.SystemClock.elapsedRealtime() - resumedAt) else 0L
+        val settling = if (foreground) FOREGROUND_SETTLE_MS - (android.os.SystemClock.elapsedRealtime() - resumedAt) else 0L
         if (settling > 0) { connectionHandler.postDelayed({ if (!userStopped) cameraWifi.schedule() }, settling); return }
         if (!lifetime.desired && !prefs.getBoolean("auto_connect", true) && cameraWifi.requestedNetwork == null) return
         if (lifetime.desired && !lifetime.canReconnect(now())) return
@@ -175,7 +187,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 connectCamera(endpoint.network, automatic = true)
 
             }
-        } else if ((!profileAttempted || (wifiWasAvailable && now() - lastWifiAttempt >= 60000)) && !cameraWifi.hasActiveRequest) {
+        } else if ((!profileAttempted || (wifiWasAvailable && now() - lastWifiAttempt >= WIFI_REQUEST_RETRY_MS)) && !cameraWifi.hasActiveRequest) {
             val saved = wifiStore.load()
             if (saved != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
                 profileAttempted = true; requestWifi(saved, true)
@@ -211,6 +223,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 ui { busy.set(false); taskState = TaskState(); revision++; changed(); onComplete() }
             }
         }
+    }
+    /** The user may stop, or the network may drop, at any blocking step of the connect task. */
+    private fun ensureConnecting(c: PtpIpClient) {
+        if (userStopped || !lifetime.desired || client !== c) { c.abort(); error("已停止连接") }
     }
     fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) {
         if (busy.get()) return
@@ -253,7 +269,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
         imageSession = java.util.UUID.randomUUID().toString()
         galleryPhotos.clear(); thumbs.evictAll(); importedHandles.clear(); completions.beginBatch(); revision++; changed()
         task(operation = UserOperation.CONNECT, silentErrors = automatic) {
-            check(!userStopped && lifetime.desired) { "已停止连接" }
             session.disconnect()
             val candidate = cameraEndpoint(manual, selectedEndpoint.network)
                 ?: error("Wi-Fi 尚未就绪：请保持连接相机热点，等待获取 IPv4 地址后重试")
@@ -265,13 +280,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
             val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
                 zfMode = true, log = ::log)
             client = c
-            if (userStopped || !lifetime.desired) { session.disconnect(); error("已停止连接") }
+            ensureConnecting(c)
             c.connect()
-            if (client !== c || userStopped || !lifetime.desired) { c.abort(); error("已停止连接") }
+            ensureConnecting(c)
             val info = c.getDeviceInfo()
-            check(client === c && !userStopped && lifetime.desired) { "已停止连接" }
+            ensureConnecting(c)
             log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
-            val learnedSsid = runCatching { (candidate.caps.transportInfo as? WifiInfo)?.ssid?.trim('"') }.getOrNull()
+            val learnedSsid = ssidOf(candidate.caps)?.trim('"')
             prefs.edit().putString("last_camera_address", address).apply {
                 if (!learnedSsid.isNullOrBlank() && learnedSsid != "<unknown ssid>") putString("last_camera_ssid", learnedSsid)
             }.apply()
@@ -301,15 +316,14 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     private fun loadPage(c: PtpIpClient) {
         val pageSession = imageSession
-        val end = minOf(cursor + 40, handles.size)
+        val end = minOf(cursor + PAGE_SIZE, handles.size)
         while (cursor < end) {
             check(client === c) { "已停止读取" }
             val obj = c.getObjectInfo(handles[cursor])
             cursor++
             if (obj.isJpeg) {
-                val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpException) {
+                val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpResponseException) {
                     // A PTP error has a fully consumed response; transport errors abort the task.
-                    if (!e.message.orEmpty().startsWith("Camera returned PTP error")) throw e
                     log("Thumbnail unavailable; keeping original download")
                     null
                 }
@@ -318,14 +332,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     BitmapFactory.decodeByteArray(it, 0, it.size, bounds)
                     val opts = BitmapFactory.Options().apply {
                         var sample = 1
-                        while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
+                        while (bounds.outWidth / sample > GRID_THUMB_EDGE || bounds.outHeight / sample > GRID_THUMB_EDGE) sample *= 2
                         inSampleSize = sample
                     }
                     BitmapFactory.decodeByteArray(it, 0, it.size, opts)
                 }
-                if (bitmap != null) runCatching {
-                    thumbnailFile(obj.handle).writeBytes(thumb!!)
-                }
+                if (bitmap != null) runCatching { thumbnailFile(obj.handle).writeBytes(thumb!!) }
+                    .onFailure { log("Thumbnail cache write failed: ${it.javaClass.simpleName}: ${it.message}") }
                 val exists = savedExists(obj)
                 ui {
                     if (pageSession != imageSession) return@ui
@@ -340,7 +353,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         }
         ui { message = "已加载 ${photos.size} 张照片${if (cursor < handles.size) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
     }
-    val mediumPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), 48L * 1024 * 1024) }
+    val mediumPreviews by lazy { OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES) }
     fun requestMediumPreview(photo: CameraObject, key: String, current: () -> Boolean, ready: (java.io.File?) -> Unit) {
         worker.execute {
             if (!current()) return@execute
@@ -351,8 +364,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 if (result == null && c != null) {
                     for (fullHd in listOf(true, false)) {
                         if (!current() || client !== c) break
-                        val bytes = try { c.getNikonPreview(photo.handle, fullHd) } catch (e: PtpException) {
-                            if (!e.message.orEmpty().startsWith("Camera returned PTP error")) throw e
+                        val bytes = try { c.getNikonPreview(photo.handle, fullHd) } catch (e: PtpResponseException) {
                             log("Medium preview rejected fullHd=$fullHd: ${e.message}")
                             continue
                         }

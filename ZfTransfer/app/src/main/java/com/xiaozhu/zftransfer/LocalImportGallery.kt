@@ -80,7 +80,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
                         if(ImportEvidence.includeLocal(owned, fullAccess)) recorded.add(android.content.ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cursor.getLong(0)).toString())
                     }
                 }
-            }
+            }.logFailure("Album scan failed")
             val local = recorded.mapNotNull { value ->
                 runCatching {
                     val uri = Uri.parse(value)
@@ -111,7 +111,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
     private fun thumbnail(photo: Photo): Bitmap? {
         thumbs.get(photo.uri)?.let { return it }
         if (!closed && photo.uri !in failed && pending.add(photo.uri)) worker.execute {
-            val bitmap = runCatching { decode(photo, 384) }.getOrNull()
+            val bitmap = runCatching { decode(photo, 384) }.logFailure("Local thumbnail decode failed").getOrNull()
             main.post {
                 pending.remove(photo.uri)
                 if (closed) { bitmap?.recycle(); return@post }
@@ -146,7 +146,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
         dialog.previous.isEnabled = position > 0; dialog.next.isEnabled = position < photos.lastIndex
         refreshStrip()
         worker.execute {
-            val bitmap = runCatching { decode(photo, 2560) }.getOrNull()
+            val bitmap = runCatching { decode(photo, 2560) }.logFailure("Local preview decode failed").getOrNull()
             main.post {
                 if (closed || request != generation || !dialog.isShowing) { bitmap?.recycle(); return@post }
                 if (bitmap != null) {
