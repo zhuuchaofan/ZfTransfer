@@ -28,7 +28,7 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () 
         backgroundTintList = ColorStateList.valueOf(0xff242629.toInt()); setPadding(dp(12), dp(8), dp(12), dp(8)); setOnClickListener { callback() }
     }
     val image = ZoomPhotoView(context)
-    val strip = LinearLayout(context)
+    val strip = PhotoFilmstrip(context)
     val name = label("", 20f)
     val quality = label("快速缩略预览", 12f).apply { setTextColor(muted) }
     val size = label("", 13f).apply { setTextColor(muted) }
@@ -46,7 +46,7 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () 
         }, LinearLayout.LayoutParams(dp(44), dp(48)))
         header.addView(label("照片预览", 18f)); root.addView(header)
         root.addView(image, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(HorizontalScrollView(context).apply { addView(strip); isHorizontalScrollBarEnabled = false })
+        root.addView(strip, LinearLayout.LayoutParams(-1, dp(56)))
         root.addView(name, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         root.addView(quality); root.addView(size); root.addView(high, LinearLayout.LayoutParams(-1, dp(44)))
         root.addView(LinearLayout(context).apply {

@@ -1,33 +1,17 @@
 Verifies
-
 Verified using v1 scheme (JAR signing): false
-
 Verified using v2 scheme (APK Signature Scheme v2): false
-
 Verified using v3 scheme (APK Signature Scheme v3): true
-
 Verified using v3.1 scheme (APK Signature Scheme v3.1): false
-
 Verified using v4 scheme (APK Signature Scheme v4): false
-
 Verified for SourceStamp: false
-
 Number of signers: 1
-
 Signer #1 certificate DN: CN=ZfTransfer Test, O=Local Development, C=CN
-
 Signer #1 certificate SHA-256 digest: ffb112416a3c527964f49105e4c37deda13f13cd2fbb27dbbabd45c6e423563e
-
 Signer #1 certificate SHA-1 digest: b969984637715f0f55daae448e5c27dc878506fb
-
 Signer #1 certificate MD5 digest: 44a075a03cae5086f872de9738773cd2
-
 Signer #1 key algorithm: RSA
-
 Signer #1 key size (bits): 2048
-
 Signer #1 public key SHA-256 digest: cab7bfde3c70ec8bac424234b5c38879b6ddf12d9a8819ca8a96383924457b30
-
 Signer #1 public key SHA-1 digest: 68bf16fa9fff05aa8a7b4abc0657f03a981ae44d
-
 Signer #1 public key MD5 digest: 97a8423044cff9879753f75371b992c7

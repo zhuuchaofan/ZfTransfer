@@ -80,7 +80,7 @@ class MainActivity : Activity() {
     private lateinit var previewQuality: TextView
     private lateinit var previewHigh: Button
     private lateinit var previewImport: Button
-    private lateinit var previewStrip: LinearLayout
+    private lateinit var previewStrip: PhotoFilmstrip
     private lateinit var previewSelect: TextView
     private lateinit var previewPrevious: TextView
     private lateinit var previewNext: TextView
@@ -169,7 +169,7 @@ class MainActivity : Activity() {
                 }
             }
         }, 30, 30, java.util.concurrent.TimeUnit.SECONDS)
-        log("ZfTransfer 0.4.0; Android ${android.os.Build.VERSION.RELEASE}; ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        log("ZfTransfer 0.4.1; Android ${android.os.Build.VERSION.RELEASE}; ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
     }
 
     private fun resource(name: String, type: String) = resources.getIdentifier(name, type, packageName)
@@ -517,16 +517,7 @@ class MainActivity : Activity() {
         previewNext.isEnabled = previewIndex < photos.lastIndex
         previewPrevious.alpha = if (previewPrevious.isEnabled) 1f else 0.3f
         previewNext.alpha = if (previewNext.isEnabled) 1f else 0.3f
-        previewStrip.removeAllViews()
-        for (position in maxOf(0, previewIndex - 3)..minOf(photos.lastIndex, previewIndex + 3)) {
-            previewStrip.addView(ImageView(this).apply {
-                setImageBitmap(thumbnail(photos[position].handle)); scaleType = ImageView.ScaleType.CENTER_CROP
-                contentDescription = "预览 ${photos[position].filename}"
-                setPadding(dp(2), dp(2), dp(2), dp(2))
-                if (position == previewIndex) setBackgroundColor(yellow)
-                setOnClickListener { showPreview(position) }
-            }, LinearLayout.LayoutParams(dp(72), dp(56)).apply { rightMargin = dp(6) })
-        }
+        previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
     }
     private fun ui(action: () -> Unit) { runOnUiThread { if (!isDestroyed && !stopped) action() } }
     @Synchronized private fun log(message: String) {

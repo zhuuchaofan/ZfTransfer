@@ -5,6 +5,22 @@ import org.junit.Test
 
 class GalleryInteractionTest {
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
+    @Test fun filmstripCanReachBeginningMiddleAndEndOfAllLoadedPhotos() {
+        assertEquals(0..5, FilmstripWindow.visible(0, 312, 78, 932))
+        assertTrue(450 in FilmstripWindow.visible(450 * 78, 312, 78, 932))
+        assertTrue(931 in FilmstripWindow.visible(932 * 78 - 312, 312, 78, 932))
+        assertTrue(FilmstripWindow.visible(450 * 78, 312, 78, 932).count() <= 7)
+    }
+    @Test fun filmstripSelectionKeepsCurrentScrollWhenAlreadyVisible() {
+        assertEquals(780, FilmstripWindow.reveal(780, 312, 78, 12, 40))
+        assertEquals(0, FilmstripWindow.reveal(780, 312, 78, 0, 40))
+        assertEquals(2808, FilmstripWindow.reveal(0, 312, 78, 39, 40))
+    }
+    @Test fun filmstripHandlesEmptyAndShortLists() {
+        assertTrue(FilmstripWindow.visible(0, 312, 78, 0).isEmpty())
+        assertEquals(0..1, FilmstripWindow.visible(0, 312, 78, 2))
+        assertEquals(0, FilmstripWindow.reveal(0, 312, 78, 1, 2))
+    }
     @Test fun pendingTaskRoundTripsWithCameraAndExactMetadata() {
         val obj = queuedPhoto(42).copy(filename = "照片.JPG")
         val queue = TransferQueue().apply { replace("Nikon|Zf|serial", listOf(obj)) }
