@@ -16,6 +16,8 @@ import kotlin.math.abs
 class ZoomPhotoView(context: Context) : ImageView(context) {
     private val geometry = PhotoZoomState()
     private val transform = Matrix()
+    var onPage: (Int) -> Unit = {}
+    private var pageBlocked = false
     private var zoomEnabled = false
     private var zoomAnimation: ValueAnimator? = null
     private var pointer = -1
@@ -99,10 +101,10 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
         if (android.os.Build.VERSION.SDK_INT >= 30) stateDescription = if (zoomEnabled) "缩放 ${(geometry.zoom * 100).toInt()}%" else "快速缩略预览"
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!zoomEnabled || drawable == null) return super.onTouchEvent(event)
+        if(event.actionMasked==MotionEvent.ACTION_DOWN) pageBlocked=geometry.zoom>1.01f
+        if(event.actionMasked==MotionEvent.ACTION_POINTER_DOWN) pageBlocked=true
         if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) cancelZoomAnimation()
-        pinch.onTouchEvent(event)
-        taps.onTouchEvent(event)
+        if(zoomEnabled && drawable!=null) { pinch.onTouchEvent(event); taps.onTouchEvent(event) }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 pointer = event.getPointerId(0)
@@ -129,8 +131,11 @@ class ZoomPhotoView(context: Context) : ImageView(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (event.actionMasked == MotionEvent.ACTION_CANCEL) cancelZoomAnimation()
+                val direction=if(event.actionMasked==MotionEvent.ACTION_UP) SwipeNavigation.direction(
+                    event.x-downX,event.y-downY,maxOf(AppUi.dp(context,48).toFloat(),width*.12f),pageBlocked || geometry.zoom>1.01f) else 0
                 pointer = -1; dragging = false
                 parent?.requestDisallowInterceptTouchEvent(false)
+                if(direction!=0) onPage(direction)
             }
         }
         return true

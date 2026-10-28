@@ -1,4 +1,4 @@
-# Zf 传图 · 0.5.8
+# Zf 传图 · 0.5.9
 
 面向小米 14 与 Nikon Zf，通过相机 Wi-Fi 浏览照片，并把 JPEG 原图保存到系统相册 `Pictures/ZfTransfer`。
 
@@ -16,10 +16,10 @@
 
 ## 安装
 
-本地当前安装包位于工程上层 `ZfTransfer-0.5.8.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
+本地当前安装包位于工程上层 `ZfTransfer-0.5.9.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
 
 ```powershell
-& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.5.8.apk'
+& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.5.9.apk'
 ```
 
 沿用公开测试签名，覆盖安装保留下载记录。不要为了更新先卸载应用；卸载或清除数据会丢失历史记录。
@@ -170,3 +170,8 @@ powershell -ExecutionPolicy Bypass -File ..\build-local.ps1
 设置、Wi-Fi表单、重复导入、原图确认、异常、关于与许可证统一使用深色底部面板。系统权限、Wi-Fi确认与输入法仍由Android提供。本机0.5.8 APK采用同一专用发布签名，可覆盖此前公开签名版；不要用测试签名debug包覆盖它。
 
 GitHub当前公开下载仍为已发布的0.5.7，0.5.8未自动发布。验证结果见开发记录。
+
+## 左右滑动（0.5.9）
+
+首页可左右滑动切换全部、未导入、已导入，首尾不循环。标签点击与横向手势均有方向滑移和淡入淡出过渡；长按范围选择、竖向滚动保留。相机与本地预览在适屏状态下可左右滑动切换照片，前后箭头采用相同过渡；放大后单指拖动照片，双指缩放不会触发切图。遵从系统关闭动画设置。
+相机页数量说明区分文件总量与已读取JPEG数量；全部读取后显示JPEG总数，避免将已加载分页数量当作相机总数。

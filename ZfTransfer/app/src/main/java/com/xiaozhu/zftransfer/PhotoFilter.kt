@@ -19,3 +19,19 @@ object PhotoCatalog {
         return existing + visible(loaded, verified, filter).filter { known.add(it.handle) }
     }
 }
+
+/** One horizontal gesture moves at most one page; vertical browsing and zoom own their gestures. */
+object SwipeNavigation {
+    fun direction(dx: Float, dy: Float, threshold: Float, blocked: Boolean = false): Int {
+        if(blocked || !dx.isFinite() || !dy.isFinite() || kotlin.math.abs(dx) < threshold ||
+            kotlin.math.abs(dx) <= kotlin.math.abs(dy) * 1.5f) return 0
+        return if(dx < 0) 1 else -1
+    }
+    fun adjacent(index: Int, count: Int, direction: Int) = (index + direction).coerceIn(0, (count-1).coerceAtLeast(0))
+}
+
+object CameraCatalogSummary {
+    fun text(totalFiles: Int, readFiles: Int, loadedJpegs: Int): String =
+        if(readFiles >= totalFiles) "相机共 $loadedJpegs 张 JPEG"
+        else "相机共 $totalFiles 个文件 · 已读取 $loadedJpegs 张 JPEG"
+}

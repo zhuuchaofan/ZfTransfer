@@ -403,6 +403,8 @@ class MainActivity : Activity() {
     private fun updateGalleryControls() {
         if (!::footer.isInitialized) return
         val local=activeFilter==PhotoFilter.IMPORTED
+        screen.catalogSummary.visibility=if(!local && runtime.connectionReady) View.VISIBLE else View.GONE
+        screen.catalogSummary.text=CameraCatalogSummary.text(handles.size,cursor,photos.size)
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
         if(local) {

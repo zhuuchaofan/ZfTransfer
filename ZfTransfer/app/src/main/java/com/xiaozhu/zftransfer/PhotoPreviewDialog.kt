@@ -7,8 +7,8 @@ import android.view.Gravity
 import android.widget.*
 
 /** Immersive photo viewer. View state and transfers are owned by its controller. */
-class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () -> Unit,
-    onNext: () -> Unit, onImport: () -> Unit, onSelect: () -> Unit) : Dialog(activity,android.R.style.Theme_Material_NoActionBar) {
+class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, private val onPrevious: () -> Unit,
+    private val onNext: () -> Unit, onImport: () -> Unit, onSelect: () -> Unit) : Dialog(activity,android.R.style.Theme_Material_NoActionBar) {
     private fun dp(n:Int)=AppUi.dp(context,n)
     private fun label(value:String,size:Float=14f,color:Int=Color.WHITE)=AppUi.text(context,value,size,color)
     private fun arrow(description:String,next:Boolean=false,run:()->Unit)=ImageButton(context).apply {
@@ -27,11 +27,33 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, onPrevious: () 
     val high=label("原图",14f,AppUi.yellow).apply {
         gravity=Gravity.CENTER;minHeight=dp(48);contentDescription="查看原图";setOnClickListener { onHigh() }
     }
-    val previous=arrow("上一张",run=onPrevious)
-    val next=arrow("下一张",true,onNext)
+    val previous=arrow("上一张") { navigate(-1) }
+    val next=arrow("下一张",true) { navigate(1) }
     val import=ProgressActionButton(context).apply { text="导入原图";setOnClickListener { onImport() } }
     val select=AppUi.button(context,"加入选择",false,onSelect)
+    private var switching=false
+    private fun navigate(direction: Int) {
+        if(switching || (direction>0 && !next.isEnabled) || (direction<0 && !previous.isEnabled)) return
+        val change = { if(direction>0) onNext() else onPrevious() }
+        if(!android.animation.ValueAnimator.areAnimatorsEnabled()) { change();return }
+        switching=true
+        val distance=dp(72).toFloat()
+        image.animate().translationX(-direction*distance).alpha(0f).setDuration(110)
+            .setInterpolator(android.view.animation.AccelerateInterpolator()).withEndAction {
+                if(!isShowing) { switching=false;return@withEndAction }
+                change()
+                image.translationX=direction*distance
+                image.animate().translationX(0f).alpha(1f).setDuration(210)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
+                    .withEndAction { switching=false }.start()
+            }.start()
+    }
+    override fun dismiss() {
+        image.animate().cancel(); image.translationX=0f; image.alpha=1f; switching=false
+        super.dismiss()
+    }
     init {
+        image.onPage=::navigate
         val root=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL;setBackgroundColor(AppUi.background) }
         root.addView(LinearLayout(context).apply {
             gravity=Gravity.CENTER_VERTICAL

@@ -20,7 +20,25 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     private fun action(value: String, run: () -> Unit) = text(value,14f,AppUi.yellow).apply {
         gravity=Gravity.CENTER; minWidth=dp(48); minHeight=dp(44); setOnClickListener { run() }
     }
-    val root = LinearLayout(context).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(AppUi.background) }
+    private var activeFilter=PhotoFilter.ALL
+    private var switching=false
+    private lateinit var gallery: FrameLayout
+    private fun switchFilter(filter: PhotoFilter) {
+        if(switching || filter==activeFilter) return
+        val direction=if(filter.ordinal>activeFilter.ordinal) 1 else -1
+        if(!android.animation.ValueAnimator.areAnimatorsEnabled()) { actions.filter(filter);return }
+        switching=true
+        val distance=dp(64).toFloat()
+        gallery.animate().translationX(-direction*distance).alpha(0f).setDuration(110)
+            .setInterpolator(android.view.animation.AccelerateInterpolator()).withEndAction {
+                actions.filter(filter)
+                gallery.translationX=direction*distance
+                gallery.animate().translationX(0f).alpha(1f).setDuration(210)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f))
+                    .withEndAction { switching=false }.start()
+            }.start()
+    }
+    val root = SwipeTabsLayout(context).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(AppUi.background) }
     val status = text("",12f,AppUi.muted).apply { maxLines=2; visibility=View.GONE }
     val progress = ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal).apply {
         max=100; progressTintList=android.content.res.ColorStateList.valueOf(AppUi.yellow); visibility=View.GONE
@@ -31,6 +49,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val selectAll = action("全选") { actions.selectAll() }
     val cancelSelection = action("取消") { actions.cancelSelection() }
     val headingTitle = text("相机照片",20f).apply { typeface=Typeface.DEFAULT_BOLD }
+    val catalogSummary = text("",11f,AppUi.muted).apply { visibility=View.GONE }
     val count = text("",13f,AppUi.muted)
     val selectionLabel = text("长按滑动多选",13f,AppUi.muted)
     val download = AppUi.button(context,"导入原图",true) { actions.importSelected() }
@@ -44,6 +63,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val emptyReadMore = AppUi.button(context,"继续读取照片",true) { actions.readMore() }.apply { visibility=View.GONE }
     private val filters = linkedMapOf<PhotoFilter, Pair<TextView,View>>()
     init {
+        root.onPage={ direction -> switchFilter(PhotoFilter.entries[SwipeNavigation.adjacent(activeFilter.ordinal,PhotoFilter.entries.size,direction)]) }
         root.setOnApplyWindowInsetsListener { v,insets ->
             v.setPadding(dp(8),insets.systemWindowInsetTop,dp(8),insets.systemWindowInsetBottom);insets
         }
@@ -70,7 +90,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         val tabs=LinearLayout(context)
         for (filter in PhotoFilter.entries) {
             val tab=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
-            val label=action(filter.label) { actions.filter(filter) }
+            val label=action(filter.label) { switchFilter(filter) }
             val underline=View(context)
             tab.addView(label,LinearLayout.LayoutParams(-1,dp(42)))
             tab.addView(underline,LinearLayout.LayoutParams(-1,dp(2)))
@@ -82,7 +102,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         heading.addView(count,LinearLayout.LayoutParams(0,-2,1f).apply { leftMargin=dp(10) })
         heading.addView(selectAll,LinearLayout.LayoutParams(dp(48),dp(44)))
         heading.addView(cancelSelection,LinearLayout.LayoutParams(dp(48),dp(44)))
-        root.addView(heading);root.addView(status);root.addView(progress,LinearLayout.LayoutParams(-1,dp(2)))
+        root.addView(heading);root.addView(catalogSummary);root.addView(status);root.addView(progress,LinearLayout.LayoutParams(-1,dp(2)))
         grid.apply {
             numColumns=3;horizontalSpacing=dp(3);verticalSpacing=dp(3);stretchMode=GridView.STRETCH_COLUMN_WIDTH
             this.adapter=adapter; setOnItemClickListener { _,_,_,handle -> actions.preview(handle) }
@@ -90,7 +110,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
             onRangeStart={ actions.rangeStart(it) };onRangeMove={ actions.rangeMove(it) };onReadMore={ actions.readMore() }
         }
         root.addView(localAccess,LinearLayout.LayoutParams(-1,dp(46)))
-        val gallery=FrameLayout(context)
+        gallery=FrameLayout(context).apply { clipToPadding=true }
         val empty=LinearLayout(context).apply {
             orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(20),dp(12),dp(20),dp(12))
             addView(emptyTitle);addView(emptyHint,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(18) })
@@ -113,6 +133,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         renderFilter(PhotoFilter.ALL,0,false)
     }
     fun renderFilter(active: PhotoFilter, visible: Int, enabled: Boolean) {
+        activeFilter=active
         count.text=visible.toString()
         filters.forEach { (filter,pair) ->
             pair.first.setTextColor(if(filter==active) AppUi.yellow else AppUi.muted)

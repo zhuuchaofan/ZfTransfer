@@ -4,6 +4,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GalleryInteractionTest {
+    @Test fun cameraTotalDoesNotConfuseUnclassifiedFilesWithJpegs() {
+        assertEquals("相机共 500 个文件 · 已读取 36 张 JPEG",CameraCatalogSummary.text(500,40,36))
+        assertEquals("相机共 430 张 JPEG",CameraCatalogSummary.text(500,500,430))
+        assertEquals("相机共 0 张 JPEG",CameraCatalogSummary.text(0,0,0))
+    }
+
+    @Test fun horizontalSwipeNavigatesOnlyOneAdjacentPageWithoutWrapping() {
+        assertEquals(1,SwipeNavigation.direction(-160f,20f,100f))
+        assertEquals(-1,SwipeNavigation.direction(160f,20f,100f))
+        assertEquals(0,SwipeNavigation.adjacent(0,3,-1))
+        assertEquals(2,SwipeNavigation.adjacent(2,3,1))
+        assertEquals(1,SwipeNavigation.adjacent(0,3,1))
+    }
+    @Test fun zoomPinchVerticalAndSmallGesturesNeverNavigate() {
+        assertEquals(0,SwipeNavigation.direction(-200f,10f,100f,true))
+        assertEquals(0,SwipeNavigation.direction(-100f,160f,100f))
+        assertEquals(0,SwipeNavigation.direction(-99f,0f,100f))
+        assertEquals(0,SwipeNavigation.direction(Float.NaN,0f,100f))
+    }
+
     @Test fun historicalAlbumPermissionDoesNotCreateImportEvidence() {
         assertTrue(ImportEvidence.includeLocal(false, true))
         assertFalse(ImportEvidence.confirmsLocal(false, false))
