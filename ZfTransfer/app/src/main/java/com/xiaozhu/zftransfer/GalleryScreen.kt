@@ -39,7 +39,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
             }.start()
     }
     val root = SwipeTabsLayout(context).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(AppUi.background) }
-    val status = text("",12f,AppUi.muted).apply { maxLines=2; visibility=View.GONE }
+    val status = text("",12f,AppUi.muted).apply { maxLines=4; ellipsize=android.text.TextUtils.TruncateAt.END; visibility=View.GONE }
     val progress = ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal).apply {
         max=100; progressTintList=android.content.res.ColorStateList.valueOf(AppUi.yellow); visibility=View.GONE
     }
