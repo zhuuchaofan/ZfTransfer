@@ -121,6 +121,7 @@ class MainActivity : Activity() {
         if (renderedRevision != runtime.revision) {
             renderedRevision = runtime.revision
             selected.keys.removeAll(runtime.completed)
+            if (runtime.completed.isNotEmpty() && selected.isEmpty()) selectionMode = false
             runtime.completed.clear()
             setBusy(busy.get()); updateSelection()
             photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
@@ -498,7 +499,7 @@ class MainActivity : Activity() {
             val verified = snapshot.filter { savedExists(it) }.map { it.handle }.toSet()
             ui {
                 if (!busy.get() && identity == cameraIdentity) {
-                    imported.clear(); imported.addAll(verified); adapter.notifyDataSetChanged()
+                    imported.clear(); imported.addAll(verified); adapter.notifyDataSetChanged(); updatePreviewActions()
                 }
             }
         }
@@ -520,8 +521,8 @@ class MainActivity : Activity() {
         }
         val dialog = PhotoPreviewDialog(this, ::confirmOriginalPreview,
             { showPreview(previewIndex - 1) }, { showPreview(previewIndex + 1) }, {
-                val obj = photos[previewIndex]; preview?.dismiss(); requestImport(listOf(obj))
-            }, { toggle(photos[previewIndex]); preview?.dismiss() })
+                val obj = photos[previewIndex]; requestImport(listOf(obj))
+            }, { toggle(photos[previewIndex]) })
         preview = dialog
         dialog.setOnDismissListener { originalDialog?.dismiss(); previewGeneration++ }
         previewImage = dialog.image; previewStrip = dialog.strip; previewName = dialog.name
@@ -530,6 +531,16 @@ class MainActivity : Activity() {
         previewImport = dialog.import; previewSelect = dialog.select
         renderPreview()
         dialog.show()
+        updatePreviewActions()
+    }
+    private fun updatePreviewActions() {
+        if (preview?.isShowing != true) return
+        val obj = photos.getOrNull(previewIndex) ?: return
+        previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
+        previewSelect.text = if (obj.handle in selected) "移出选择" else "加入选择"
+        previewImport.text = if (busy.get()) "正在处理…" else if (obj.handle in imported) "再次导入这张原图" else "导入这张原图"
+        previewImport.isEnabled = !busy.get() && client != null
+        previewSelect.isEnabled = !busy.get()
     }
     private fun renderPreview() {
         val obj = photos[previewIndex]
@@ -548,6 +559,7 @@ class MainActivity : Activity() {
         previewPrevious.alpha = if (previewPrevious.isEnabled) 1f else 0.3f
         previewNext.alpha = if (previewNext.isEnabled) 1f else 0.3f
         previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
+        updatePreviewActions()
     }
     private fun ui(action: () -> Unit) { runOnUiThread { if (!isDestroyed && !stopped) action() } }
     private fun log(message: String) = runtime.log(message)
@@ -612,6 +624,8 @@ class MainActivity : Activity() {
         if (::previewImport.isInitialized) previewImport.isEnabled = !value && client != null
         if (::previewSelect.isInitialized) previewSelect.isEnabled = !value
         grid.editable = !value
+        grid.canReadMore = !value && client != null && cursor < handles.size
+        updatePreviewActions()
         progress.visibility = if (value) View.VISIBLE else View.GONE
         cameraLabel.text = when {
             runtime.connectionReady -> "$cameraName · 已连接"
@@ -629,6 +643,7 @@ class MainActivity : Activity() {
     private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) = runtime.connectCamera(networkOverride, automatic)
     private fun readPage() = runtime.readPage()
     private fun updateSelection() {
+        updatePreviewActions()
         download.text = if (selected.isEmpty()) "导入原图" else "导入原图（${selected.size}）"
         download.isEnabled = selected.isNotEmpty() && client != null && !busy.get()
         download.alpha = if (download.isEnabled) 1f else 0.4f
@@ -663,6 +678,7 @@ class MainActivity : Activity() {
             if (checked && client != null) {
                 items.forEach { if (it.handle in duplicates) imported.add(it.handle) else imported.remove(it.handle) }
                 adapter.notifyDataSetChanged()
+                updatePreviewActions()
                 if (duplicates.isEmpty()) startImport(items, false)
                 else showDuplicateChoices(items, duplicates.size)
             }

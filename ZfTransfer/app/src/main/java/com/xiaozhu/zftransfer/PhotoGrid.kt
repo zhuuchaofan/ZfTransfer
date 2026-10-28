@@ -8,6 +8,27 @@ import kotlin.math.abs
 
 /** Normal scrolling remains native; only a stationary long press captures a drag. */
 class PhotoGrid(context: Context) : GridView(context) {
+    var canReadMore = false
+    var onReadMore: () -> Unit = {}
+    private var scrolling = false
+    private var lastRequestedCount = -1
+    init {
+        setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {
+                scrolling = state != android.widget.AbsListView.OnScrollListener.SCROLL_STATE_IDLE
+                if (scrolling) maybeReadMore(firstVisiblePosition, childCount, count)
+            }
+            override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
+                maybeReadMore(first, visible, total)
+            }
+        })
+    }
+    private fun maybeReadMore(first: Int, visible: Int, total: Int) {
+        if (!scrolling || dragging || !editable || !canReadMore || total == 0 || visible == 0) return
+        if (first + visible < total - 6 || lastRequestedCount == total) return
+        lastRequestedCount = total
+        onReadMore()
+    }
     var editable = true
     var onRangeStart: (Int) -> Unit = {}
     var onRangeMove: (Int) -> Unit = {}
@@ -55,6 +76,7 @@ class PhotoGrid(context: Context) : GridView(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x; downY = event.y
+                lastRequestedCount = -1
                 if (editable) postDelayed(startDrag, ViewConfiguration.getLongPressTimeout().toLong())
             }
             MotionEvent.ACTION_MOVE -> {

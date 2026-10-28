@@ -131,6 +131,7 @@ class GalleryScreen(private val context: Context, address: String?, photoAdapter
             backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
             textSize = 13f; visibility = View.GONE
         }
+        grid.onReadMore = { actions.readMore() }
         root.addView(more, LinearLayout.LayoutParams(-1, dp(44)))
         footer = LinearLayout(context).apply {
             gravity = Gravity.CENTER_VERTICAL
