@@ -62,6 +62,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var handles = emptyList<Long>()
     @Volatile var cursor = 0
     var message = ""
+    var importProgress: Pair<Long, Int>? = null
     var progress = 0
     @Volatile var revision = 0L
     private var issue: Pair<UserIssue, Boolean>? = null
@@ -202,7 +203,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 } else presentIssue(UserIssues.from(e, operation), !silentErrors)
             } finally {
                 busy.set(false)
-                ui { revision++; changed(); onComplete() }
+                ui { if (operation == UserOperation.IMPORT) importProgress = null; revision++; changed(); onComplete() }
             }
         }
     }
@@ -375,7 +376,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 checkActive = { check(client === c) { "已停止传输" } },
                 progress = { index, obj, percentage ->
                     report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
-                    ui { progress = percentage; changed() }
+                    ui { progress = percentage; importProgress = obj.handle to percentage; changed() }
                 }, completed = { obj, verified -> ui {
                     completed.add(obj.handle)
                     if (verified) imported.add(obj.handle) else imported.remove(obj.handle)

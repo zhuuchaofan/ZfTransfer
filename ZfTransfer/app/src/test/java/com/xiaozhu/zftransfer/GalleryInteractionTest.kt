@@ -371,4 +371,11 @@ class GalleryInteractionTest {
         assertFalse(ImportEvidence.matches(100, 100, 0, null))
         assertFalse(ImportEvidence.matches(100, 100, 0, "image/png"))
     }
+    @org.junit.Test fun filmstripPrefetchesNearEndOnly() {
+        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(0, 400, 78, 40))
+        org.junit.Assert.assertTrue(FilmstripWindow.nearEnd(2500, 400, 78, 40))
+        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 400, 78, 80))
+        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 0, 78, 40))
+        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 400, 78, 0))
+    }
 }

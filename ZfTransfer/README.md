@@ -1,4 +1,4 @@
-# Zf 传图 · 0.5.5 测试版
+# Zf 传图 · 0.5.6 测试版
 
 面向小米 14 与 Nikon Zf，通过相机 Wi-Fi 浏览照片，并把 JPEG 原图保存到系统相册 `Pictures/ZfTransfer`。
 
@@ -16,10 +16,10 @@
 
 ## 安装
 
-本地当前安装包位于工程上层 `ZfTransfer-0.5.5-debug.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
+本地当前安装包位于工程上层 `ZfTransfer-0.5.6-debug.apk`，APK 不纳入 Git。此前已在小米 14 覆盖安装并启动过本项目测试包；最后一轮修复仍需完整回归。
 
 ```powershell
-& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.5.5-debug.apk'
+& 'D:\Android\SDK\platform-tools\adb.exe' install -r 'D:\Projects\ZfTransfer-test\ZfTransfer-0.5.6-debug.apk'
 ```
 
 沿用公开测试签名，覆盖安装保留下载记录。不要为了更新先卸载应用；卸载或清除数据会丢失历史记录。
@@ -142,3 +142,8 @@ powershell -ExecutionPolicy Bypass -File ..\build-local.ps1
 向后浏览接近列表底部时自动追加读取下一批照片，已有照片与选择保留，也可点继续读取按钮。预览页点击导入或加入／移出选择后停留在当前照片，导入期间禁止重复操作，完成后更新已导入状态并取消对应照片的选择；失败未完成的照片保持选中。导入记录仍需手机文件验证，重复导入仍显示三种选择。
 
 新增自动读取与导入完成后的停留、取消选择行为尚待连接相机实测。
+
+
+## 预览进度与缩略图栏追加（0.5.6）
+
+预览导入按钮显示下载百分比；滑动底部缩略图栏接近尾部时自动追加读取。传输中隐藏剩余任务入口，任务结束后仍有未完成照片才显示“继续导入未完成的 N 张”。新增行为仍需相机实测。

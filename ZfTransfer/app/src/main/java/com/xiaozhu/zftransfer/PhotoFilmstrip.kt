@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.view.View
+import android.view.MotionEvent
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -20,7 +21,19 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     private var selected = -1
     private var thumbnail: (Long) -> Bitmap? = { null }
     private var choose: (Int) -> Unit = {}
+    var canReadMore: () -> Boolean = { false }
+    var onReadMore: () -> Unit = {}
+    private var lastRequestedCount = -1
+    private var userBrowsing = false
+    private var revealing = false
     private var revealPending = false
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            userBrowsing = true; lastRequestedCount = -1
+        }
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) userBrowsing = false
+        return super.dispatchTouchEvent(event)
+    }
     init {
         isHorizontalScrollBarEnabled = false
         contentDescription = "全部已读取照片缩略图，可左右滑动"
@@ -43,6 +56,11 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt); render()
+        if (userBrowsing && !revealing && l > oldl && canReadMore() &&
+            lastRequestedCount != photos.size && FilmstripWindow.nearEnd(l, width, step, photos.size)) {
+            lastRequestedCount = photos.size
+            onReadMore()
+        }
     }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w,h,oldw,oldh)
@@ -53,7 +71,8 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
         if (!revealPending || width <= 0 || selected !in photos.indices) return
         revealPending = false
         val target = FilmstripWindow.reveal(scrollX, width, step, selected, photos.size)
-        scrollTo(target, 0); render()
+        revealing = true
+        try { scrollTo(target, 0); render() } finally { revealing = false }
     }
     private fun render() {
         if (width <= 0) return

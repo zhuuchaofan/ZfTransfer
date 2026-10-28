@@ -114,6 +114,8 @@ class MainActivity : Activity() {
         status.text = runtime.message
         status.visibility = if (runtime.message.isEmpty()) View.GONE else View.VISIBLE
         progress.progress = runtime.progress
+        setBusy(busy.get())
+        updateRetryControl()
         if (renderedSession != imageSession) {
             renderedSession = imageSession; selected.clear(); selectionMode = false; upgraded.clear()
             preview?.dismiss(); previewGeneration++
@@ -123,7 +125,12 @@ class MainActivity : Activity() {
             selected.keys.removeAll(runtime.completed)
             if (runtime.completed.isNotEmpty() && selected.isEmpty()) selectionMode = false
             runtime.completed.clear()
-            setBusy(busy.get()); updateSelection()
+            updateSelection()
+            if (preview?.isShowing == true) {
+                previewStrip.submit(photos, previewIndex, ::thumbnail, ::showPreview)
+                previewNext.isEnabled = previewIndex < photos.lastIndex
+                previewNext.alpha = if (previewNext.isEnabled) 1f else 0.3f
+            }
             photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
                 upgradeGrid(it, duplicateKey(it), imageSession)
             }
@@ -529,6 +536,8 @@ class MainActivity : Activity() {
         previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
         previewPrevious = dialog.previous; previewNext = dialog.next
         previewImport = dialog.import; previewSelect = dialog.select
+        previewStrip.canReadMore = { !busy.get() && client != null && cursor < handles.size }
+        previewStrip.onReadMore = ::readPage
         renderPreview()
         dialog.show()
         updatePreviewActions()
@@ -538,7 +547,14 @@ class MainActivity : Activity() {
         val obj = photos.getOrNull(previewIndex) ?: return
         previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
         previewSelect.text = if (obj.handle in selected) "移出选择" else "加入选择"
-        previewImport.text = if (busy.get()) "正在处理…" else if (obj.handle in imported) "再次导入这张原图" else "导入这张原图"
+        val transfer = runtime.importProgress
+        previewImport.text = when {
+            busy.get() && transfer?.first == obj.handle -> "正在导入 ${transfer.second.coerceIn(0, 100)}%"
+            busy.get() && transfer != null -> "正在导入其他照片 ${transfer.second.coerceIn(0, 100)}%"
+            busy.get() -> "正在处理…"
+            obj.handle in imported -> "再次导入这张原图"
+            else -> "导入这张原图"
+        }
         previewImport.isEnabled = !busy.get() && client != null
         previewSelect.isEnabled = !busy.get()
     }
@@ -715,8 +731,8 @@ class MainActivity : Activity() {
     private fun updateRetryControl() {
         if (!::retryTransfer.isInitialized) return
         val count = transfers.queue.remaining.size
-        retryTransfer.visibility = if (count > 0) View.VISIBLE else View.GONE
-        retryTransfer.text = "重试未完成（$count 张）"
+        retryTransfer.visibility = if (count > 0 && !busy.get()) View.VISIBLE else View.GONE
+        retryTransfer.text = "继续导入未完成的 $count 张"
         retryTransfer.isEnabled = !busy.get() && client != null
     }
     private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) = runtime.startImport(items, skipExisting, retry)

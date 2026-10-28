@@ -2,6 +2,9 @@ package com.xiaozhu.zftransfer
 
 /** Pure viewport geometry; never limits the underlying photo list. */
 object FilmstripWindow {
+    fun nearEnd(scroll: Int, viewport: Int, step: Int, count: Int): Boolean =
+        viewport > 0 && step > 0 && count > 0 &&
+            scroll.coerceAtLeast(0).toLong() + viewport >= (count.toLong() - 3).coerceAtLeast(0) * step
     fun visible(scroll: Int, viewport: Int, step: Int, count: Int): IntRange {
         if (viewport <= 0 || step <= 0 || count <= 0) return IntRange.EMPTY
         val first = (scroll.coerceAtLeast(0) / step - 1).coerceIn(0, count - 1)

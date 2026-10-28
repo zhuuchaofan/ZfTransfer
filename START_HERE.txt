@@ -1,5 +1,5 @@
 Android 工程：ZfTransfer
-当前本地安装包：ZfTransfer-0.5.5-debug.apk（不纳入 Git）
+当前本地安装包：ZfTransfer-0.5.6-debug.apk（不纳入 Git）
 开发与实机验证边界：开发记录.md
 使用与构建：ZfTransfer/README.md
 所有 Git 提交说明使用中文。
