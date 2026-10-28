@@ -28,3 +28,6 @@ __pycache__/
 
 # 此文件是工程公开的测试签名，仅用于测试包覆盖安装
 !/ZfTransfer/test-keystore.jks
+
+# 本机发布签名与口令，不得上传
+/.release-signing/

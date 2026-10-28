@@ -1,10 +1,23 @@
-param(
+﻿param(
     [string]$Sdk = 'D:\Android\SDK',
-    [string]$Studio = 'C:\Program Files\Android\Android Studio'
+    [string]$Studio = 'C:\Program Files\Android\Android Studio',
+    [switch]$Release,
+    [string]$SigningDirectory = (Join-Path $PSScriptRoot '.release-signing')
 )
 $ErrorActionPreference = 'Stop'
 $project = Join-Path $PSScriptRoot 'ZfTransfer'
-$out = Join-Path $PSScriptRoot 'build-local'
+$out = Join-Path $PSScriptRoot $(if ($Release) { 'build-local\release' } else { 'build-local' })
+$config = Get-Content "$project\app\build.gradle.kts" -Raw
+$versionCode = [regex]::Match($config, 'versionCode\s*=\s*(\d+)').Groups[1].Value
+$baseVersion = [regex]::Match($config, 'versionName\s*=\s*"([^"]+)"').Groups[1].Value -replace '-test$', ''
+if (!$versionCode -or !$baseVersion) { throw '无法读取版本信息' }
+$versionName = if ($Release) { $baseVersion } else { "$baseVersion-test" }
+$artifact = Join-Path $PSScriptRoot $(if ($Release) { "ZfTransfer-$baseVersion.apk" } else { "ZfTransfer-$baseVersion-debug.apk" })
+$releaseKey = Join-Path $SigningDirectory 'release.jks'
+$releasePassword = Join-Path $SigningDirectory 'password.txt'
+if ($Release -and (!(Test-Path -LiteralPath $releaseKey) -or !(Test-Path -LiteralPath $releasePassword))) {
+    throw '缺少专用发布签名。先运行 init-release-signing.ps1，或指定已有签名目录。禁止使用公开测试密钥发布。'
+}
 $env:JAVA_HOME = Join-Path $Studio 'jbr'
 $java = Join-Path $env:JAVA_HOME 'bin\java.exe'
 $kotlin = Join-Path $Studio 'plugins\Kotlin\kotlinc'
@@ -27,8 +40,9 @@ Check-Step
 Check-Step
 $manifest = Get-Content "$project\app\src\main\AndroidManifest.xml" -Raw
 $manifest = $manifest.Replace('<manifest ', '<manifest package="com.xiaozhu.zftransfer" ')
+if ($Release) { $manifest = $manifest.Replace('<application ', '<application android:debuggable="false" ') }
 [IO.File]::WriteAllText("$out\AndroidManifest.xml", $manifest, [Text.UTF8Encoding]::new($false))
-& "$tools\aapt2.exe" link -o "$out\unsigned.apk" -I $android --manifest "$out\AndroidManifest.xml" --min-sdk-version 29 --target-sdk-version 36 --version-code 17 --version-name '0.5.7-test' -A "$project\app\src\main\assets" "$out\resources.zip"
+& "$tools\aapt2.exe" link -o "$out\unsigned.apk" -I $android --manifest "$out\AndroidManifest.xml" --min-sdk-version 29 --target-sdk-version 36 --version-code $versionCode --version-name $versionName -A "$project\app\src\main\assets" "$out\resources.zip"
 Check-Step
 & $java -cp "$Studio\plugins\android\lib\r8.jar" com.android.tools.r8.D8 --lib $android --min-api 29 --output "$out\dex" "$out\classes.jar" "$kotlin\lib\kotlin-stdlib.jar" "$kotlin\lib\annotations-13.0.jar"
 Check-Step
@@ -36,11 +50,19 @@ Check-Step
 Check-Step
 & "$tools\zipalign.exe" -f -p 4 "$out\unsigned.apk" "$out\aligned.apk"
 Check-Step
-& "$tools\apksigner.bat" sign --ks "$project\test-keystore.jks" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" "$out\aligned.apk"
+if ($Release) {
+    & "$tools\apksigner.bat" sign --ks $releaseKey --ks-key-alias zftransfer --ks-pass "file:$releasePassword" --out $artifact "$out\aligned.apk"
+} else {
+    & "$tools\apksigner.bat" sign --ks "$project\test-keystore.jks" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out $artifact "$out\aligned.apk"
+}
 Check-Step
-& "$tools\apksigner.bat" verify --verbose --print-certs "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" | Tee-Object "$out\signature.txt"
+& "$tools\apksigner.bat" verify --verbose --print-certs $artifact | Tee-Object "$out\signature.txt"
 Check-Step
-& "$tools\aapt2.exe" dump badging "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" | Tee-Object "$out\badging.txt"
+& "$tools\aapt2.exe" dump badging $artifact | Tee-Object "$out\badging.txt"
 Check-Step
-Get-FileHash "$PSScriptRoot\ZfTransfer-0.5.7-debug.apk" -Algorithm SHA256 | Format-List | Out-File "$out\sha256.txt"
-Write-Host 'Built ZfTransfer-0.5.7-debug.apk. No device testing implied.'
+Get-FileHash $artifact -Algorithm SHA256 | Format-List | Out-File "$out\sha256.txt"
+if ($Release) {
+    $digest = (Get-FileHash $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText("$out\SHA256SUMS.txt", "$digest  $([IO.Path]::GetFileName($artifact))`n", [Text.UTF8Encoding]::new($false))
+}
+Write-Host "Built $([IO.Path]::GetFileName($artifact)). No additional device testing implied."
