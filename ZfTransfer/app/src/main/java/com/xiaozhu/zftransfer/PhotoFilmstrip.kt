@@ -13,7 +13,7 @@ import io.github.noisetta.nikonpull.ptp.CameraObject
 /** Full loaded list with a bounded set of visible thumbnail views. */
 class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
-    private val step get() = dp(78)
+    private val step get() = dp(64)
     private val content = FrameLayout(context)
     private val visible = mutableMapOf<Int, ImageView>()
     private val recycled = ArrayDeque<ImageView>()
@@ -25,13 +25,20 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
     var onReadMore: () -> Unit = {}
     var onBrowseGesture: () -> Unit = {}
     private var userBrowsing = false
+    private var gestureStartX = 0f
+    private var edgeRequested = false
     private var revealing = false
     private var revealPending = false
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            userBrowsing = true; onBrowseGesture()
+            userBrowsing = true; gestureStartX=event.x; edgeRequested=false; onBrowseGesture()
         }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) userBrowsing = false
+        if (event.actionMasked == MotionEvent.ACTION_UP && !edgeRequested &&
+            gestureStartX-event.x > android.view.ViewConfiguration.get(context).scaledTouchSlop &&
+            scrollX+width >= content.width-dp(4) && canReadMore()) {
+            edgeRequested=true;onReadMore()
+        }
         return super.dispatchTouchEvent(event)
     }
     init {
@@ -58,7 +65,7 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
         super.onScrollChanged(l, t, oldl, oldt); render()
         if (userBrowsing && !revealing && l > oldl && canReadMore() &&
             FilmstripWindow.nearEnd(l, width, step, photos.size)) {
-            onReadMore()
+            edgeRequested=true;onReadMore()
         }
     }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -88,7 +95,7 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
                 view.setImageBitmap(thumbnail(photos[position].handle))
                 view.contentDescription = "预览 ${photos[position].filename}"
                 view.setOnClickListener { choose(position) }
-                content.addView(view, FrameLayout.LayoutParams(dp(72), dp(56)).apply { leftMargin = position * step })
+                content.addView(view, FrameLayout.LayoutParams(dp(58), dp(52)).apply { leftMargin = position * step })
                 view
             }
             image.setImageBitmap(thumbnail(photos[position].handle))

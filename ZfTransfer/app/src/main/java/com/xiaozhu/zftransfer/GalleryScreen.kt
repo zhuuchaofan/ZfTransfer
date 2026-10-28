@@ -1,164 +1,123 @@
 package com.xiaozhu.zftransfer
 
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.widget.*
 
-/** Builds the gallery. Camera operations and selection policy stay outside the views. */
-class GalleryScreen(private val context: Context, photoAdapter: BaseAdapter, private val actions: Actions) {
+/** Compact photography surface; all operations remain in the screen controller. */
+class GalleryScreen(private val context: Context, adapter: BaseAdapter, private val actions: Actions) {
     interface Actions {
         fun settings(); fun cameraStatus(); fun connect(); fun selectAll(); fun cancelSelection()
-        fun preview(index: Int); fun rangeStart(index: Int); fun rangeMove(index: Int)
+        fun preview(handle: Long); fun toggle(index: Int); fun rangeStart(index: Int); fun rangeMove(index: Int)
         fun wifiProfile(); fun wifiSettings(); fun readMore(); fun importSelected(); fun retry()
+        fun filter(filter: PhotoFilter)
     }
-    private val yellow = 0xfff2c45b.toInt()
-    private val surfaceColor = 0xff101112.toInt()
-    private val muted = 0xffa1a4aa.toInt()
-    val root: LinearLayout
-    val status: TextView
-    val grid: PhotoGrid
-    val selectionLabel: TextView
-    val cameraLabel: TextView
-    val selectAll: TextView
-    val cancelSelection: TextView
-    val footer: LinearLayout
-    val emptyTitle: TextView
-    val emptyHint: TextView
-    val connect: Button
-    val more: Button
-    val download: Button
-    val progress: ProgressBar
-    val retryTransfer: Button
+    private fun dp(n: Int) = AppUi.dp(context,n)
+    private fun text(value: String,size: Float=14f,color: Int=Color.WHITE) = AppUi.text(context,value,size,color)
+    private fun action(value: String, run: () -> Unit) = text(value,14f,AppUi.yellow).apply {
+        gravity=Gravity.CENTER; minWidth=dp(48); minHeight=dp(44); setOnClickListener { run() }
+    }
+    val root = LinearLayout(context).apply { orientation=LinearLayout.VERTICAL; setBackgroundColor(AppUi.background) }
+    val status = text("",12f,AppUi.muted).apply { maxLines=2; visibility=View.GONE }
+    val progress = ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal).apply {
+        max=100; progressTintList=android.content.res.ColorStateList.valueOf(AppUi.yellow); visibility=View.GONE
+    }
+    val localAccess = AppUi.button(context,"读取历史导入照片") {}.apply { visibility=View.GONE }
+    val grid = PhotoGrid(context)
+    val cameraLabel = text("Nikon Zf · 尚未连接",12f,AppUi.muted)
+    val selectAll = action("全选") { actions.selectAll() }
+    val cancelSelection = action("取消") { actions.cancelSelection() }
+    val headingTitle = text("相机照片",20f).apply { typeface=Typeface.DEFAULT_BOLD }
+    val count = text("",13f,AppUi.muted)
+    val selectionLabel = text("长按滑动多选",13f,AppUi.muted)
+    val download = AppUi.button(context,"导入原图",true) { actions.importSelected() }
+    val more = AppUi.button(context,"继续读取照片") { actions.readMore() }.apply { visibility=View.GONE }
+    val retryTransfer = AppUi.button(context,"继续导入未完成照片") { actions.retry() }.apply { visibility=View.GONE }
+    val footer = LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; visibility=View.GONE }
+    val emptyTitle = text("把照片，带回手机",21f).apply { gravity=Gravity.CENTER }
+    val emptyHint = text("连接相机 Wi-Fi 后，将自动识别",14f,AppUi.muted).apply { gravity=Gravity.CENTER }
+    val connect = AppUi.button(context,"连接相机",true) { actions.connect() }
+    val connectionActions = LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
+    val emptyReadMore = AppUi.button(context,"继续读取照片",true) { actions.readMore() }.apply { visibility=View.GONE }
+    private val filters = linkedMapOf<PhotoFilter, Pair<TextView,View>>()
     init {
-        root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(surfaceColor)
-            setOnApplyWindowInsetsListener { v, insets ->
-                v.setPadding(dp(16), insets.systemWindowInsetTop, dp(16), insets.systemWindowInsetBottom)
-                insets
-            }
+        root.setOnApplyWindowInsetsListener { v,insets ->
+            v.setPadding(dp(8),insets.systemWindowInsetTop,dp(8),insets.systemWindowInsetBottom);insets
         }
-        val title = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(14)) }
-        val brand = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
-        brand.addView(label("Zf", 29f).apply { typeface = android.graphics.Typeface.create("serif", android.graphics.Typeface.ITALIC) })
-        brand.addView(label(" 传图", 24f))
-        title.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
-        title.addView(ImageButton(context).apply {
-            setImageResource(resource("ic_more", "drawable"))
-            setBackgroundColor(Color.TRANSPARENT)
-            contentDescription = "相机与应用设置"
-            setOnClickListener { actions.settings() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        root.addView(title)
-        val cameraRow = LinearLayout(context).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(16))
-            contentDescription = "相机连接状态"
+        val header=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(6),dp(4),0,0) }
+        val brand=LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            addView(text("Zf",24f).apply { typeface=Typeface.create("serif",Typeface.ITALIC) })
+            addView(text(" 传图",20f).apply { typeface=Typeface.DEFAULT_BOLD })
+        }
+        header.addView(brand,LinearLayout.LayoutParams(0,dp(44),1f))
+        header.addView(ImageButton(context).apply {
+            setImageResource(context.resources.getIdentifier("ic_more","drawable",context.packageName))
+            setBackgroundColor(Color.TRANSPARENT); contentDescription="相机与应用设置";setOnClickListener { actions.settings() }
+        },LinearLayout.LayoutParams(dp(44),dp(44)))
+        root.addView(header)
+        root.addView(LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL; setPadding(dp(6),0,dp(6),0); contentDescription="相机连接状态"
             setOnClickListener { actions.cameraStatus() }
+            addView(ImageView(context).apply {
+                setImageResource(context.resources.getIdentifier("ic_launcher","mipmap",context.packageName))
+            },LinearLayout.LayoutParams(dp(20),dp(20)).apply { rightMargin=dp(8) })
+            addView(cameraLabel)
+        },LinearLayout.LayoutParams(-1,dp(34)))
+        val tabs=LinearLayout(context)
+        for (filter in PhotoFilter.entries) {
+            val tab=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
+            val label=action(filter.label) { actions.filter(filter) }
+            val underline=View(context)
+            tab.addView(label,LinearLayout.LayoutParams(-1,dp(42)))
+            tab.addView(underline,LinearLayout.LayoutParams(-1,dp(2)))
+            tabs.addView(tab,LinearLayout.LayoutParams(0,-2,1f));filters[filter]=label to underline
         }
-        cameraRow.addView(ImageView(context).apply {
-            setImageResource(resource("ic_launcher", "mipmap"))
-            contentDescription = "Zf 传图"
-        }, LinearLayout.LayoutParams(dp(40), dp(40)))
-        cameraLabel = label("Nikon Zf · 尚未连接", 14f).apply { setTextColor(muted); setPadding(dp(12), 0, 0, 0) }
-        cameraRow.addView(cameraLabel)
-        root.addView(cameraRow)
-        connect = button("连接相机") { actions.connect() }.apply {
-            backgroundTintList = ColorStateList.valueOf(yellow)
-            setTextColor(surfaceColor); textSize = 16f
+        root.addView(tabs,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(4) })
+        val heading=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(6),0,0,0) }
+        heading.addView(headingTitle)
+        heading.addView(count,LinearLayout.LayoutParams(0,-2,1f).apply { leftMargin=dp(10) })
+        heading.addView(selectAll,LinearLayout.LayoutParams(dp(48),dp(44)))
+        heading.addView(cancelSelection,LinearLayout.LayoutParams(dp(48),dp(44)))
+        root.addView(heading);root.addView(status);root.addView(progress,LinearLayout.LayoutParams(-1,dp(2)))
+        grid.apply {
+            numColumns=3;horizontalSpacing=dp(3);verticalSpacing=dp(3);stretchMode=GridView.STRETCH_COLUMN_WIDTH
+            this.adapter=adapter; setOnItemClickListener { _,_,_,handle -> actions.preview(handle) }
+            onToggle={ actions.toggle(it) }
+            onRangeStart={ actions.rangeStart(it) };onRangeMove={ actions.rangeMove(it) };onReadMore={ actions.readMore() }
         }
-        val heading = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, 0) }
-        heading.addView(label("相机照片", 28f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
-        selectAll = textAction("全选") { actions.selectAll() }
-        cancelSelection = textAction("取消") { actions.cancelSelection() }
-        selectAll.visibility = View.GONE; cancelSelection.visibility = View.GONE
-        heading.addView(selectAll); heading.addView(cancelSelection)
-        root.addView(heading)
-        root.addView(label("JPEG 原图", 13f).apply { setTextColor(muted); setPadding(dp(2), 0, 0, dp(16)) })
-        status = label("", 12f).apply { setTextColor(muted); visibility = View.GONE; maxLines = 3 }
-        root.addView(status)
-        progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progressTintList = ColorStateList.valueOf(yellow)
-            visibility = View.GONE
+        root.addView(localAccess,LinearLayout.LayoutParams(-1,dp(46)))
+        val gallery=FrameLayout(context)
+        val empty=LinearLayout(context).apply {
+            orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(20),dp(12),dp(20),dp(12))
+            addView(emptyTitle);addView(emptyHint,LinearLayout.LayoutParams(-1,-2).apply { bottomMargin=dp(18) })
+            connectionActions.addView(connect,LinearLayout.LayoutParams(-1,dp(50)))
+            connectionActions.addView(action("在应用内连接 Wi-Fi") { actions.wifiProfile() },LinearLayout.LayoutParams(-1,dp(48)))
+            connectionActions.addView(action("打开 Wi-Fi 设置") { actions.wifiSettings() },LinearLayout.LayoutParams(-1,dp(48)))
+            addView(connectionActions,LinearLayout.LayoutParams(-1,-2))
+            addView(emptyReadMore,LinearLayout.LayoutParams(-1,dp(50)))
         }
-        root.addView(progress)
-        grid = PhotoGrid(context).apply {
-            numColumns = 3; horizontalSpacing = dp(8); verticalSpacing = dp(12)
-            stretchMode = GridView.STRETCH_COLUMN_WIDTH
-            adapter = photoAdapter
-            setOnItemClickListener { _, _, position, _ -> actions.preview(position) }
-            onRangeStart = { actions.rangeStart(it) }
-            onRangeMove = { actions.rangeMove(it) }
-        }
-        val gallery = FrameLayout(context)
-        val empty = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            setPadding(dp(24), 0, dp(24), dp(48))
-        }
-        empty.addView(ImageView(context).apply {
-            setImageResource(resource("ic_launcher", "mipmap"))
-            contentDescription = "相机连接"
-        }, LinearLayout.LayoutParams(dp(76), dp(76)).apply { bottomMargin = dp(24) })
-        emptyTitle = label("让照片，回到你的生活", 22f).apply { gravity = Gravity.CENTER }
-        emptyHint = label("连接相机 Wi-Fi 后，将自动识别\n也可在应用内设置 Wi-Fi 名和密码", 14f).apply {
-            gravity = Gravity.CENTER; setTextColor(muted); setLineSpacing(dp(5).toFloat(), 1f)
-        }
-        empty.addView(emptyTitle)
-        empty.addView(emptyHint, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(24) })
-        empty.addView(connect, LinearLayout.LayoutParams(-1, dp(52)))
-        empty.addView(textAction("在应用内连接 Wi-Fi") { actions.wifiProfile() }.apply {
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, dp(48)))
-        empty.addView(textAction("打开 Wi-Fi 设置") { actions.wifiSettings() }.apply {
-            gravity = Gravity.CENTER; setTextColor(muted)
-        }, LinearLayout.LayoutParams(-1, dp(52)))
-        gallery.addView(grid, FrameLayout.LayoutParams(-1, -1))
-        gallery.addView(empty, FrameLayout.LayoutParams(-1, -1))
-        grid.emptyView = empty
-        root.addView(gallery, LinearLayout.LayoutParams(-1, 0, 1f))
-        more = button("继续读取照片") { actions.readMore() }.apply {
-            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-            textSize = 13f; visibility = View.GONE
-        }
-        grid.onReadMore = { actions.readMore() }
-        root.addView(more, LinearLayout.LayoutParams(-1, dp(44)))
-        footer = LinearLayout(context).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(12)); visibility = View.GONE
-        }
-        selectionLabel = label("长按滑动多选", 13f).apply { setTextColor(muted) }
-        footer.addView(selectionLabel, LinearLayout.LayoutParams(0, -2, 1f))
-        download = button("导入原图") { actions.importSelected() }.apply {
-            backgroundTintList = ColorStateList.valueOf(yellow)
-            setTextColor(surfaceColor); textSize = 16f
-        }
-        footer.addView(download, LinearLayout.LayoutParams(dp(154), dp(52)))
-        root.addView(footer)
-        retryTransfer = button("重试未完成") { actions.retry() }
-        root.addView(retryTransfer, LinearLayout.LayoutParams(-1, dp(48)))
-        download.isEnabled = false; download.alpha = 0.4f
+        gallery.addView(grid,FrameLayout.LayoutParams(-1,-1));gallery.addView(empty,FrameLayout.LayoutParams(-1,-1));grid.emptyView=empty
+        root.addView(gallery,LinearLayout.LayoutParams(-1,0,1f))
+        // The manual fallback is only exposed for empty filtered results; normal browsing prefetches.
+        footer.background=AppUi.shape(context,AppUi.panel,22)
+        footer.setPadding(dp(14),dp(10),dp(10),dp(10))
+        footer.addView(selectionLabel,LinearLayout.LayoutParams(0,-2,1f))
+        footer.addView(download,LinearLayout.LayoutParams(dp(144),dp(48)))
+        root.addView(footer,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(6);bottomMargin=dp(6) })
+        root.addView(retryTransfer,LinearLayout.LayoutParams(-1,dp(48)))
+        cancelSelection.visibility=View.GONE
+        renderFilter(PhotoFilter.ALL,0,false)
     }
-    private fun resource(name: String, type: String) = context.resources.getIdentifier(name, type, context.packageName)
-    private fun textAction(text: String, action: () -> Unit) = label(text, 14f).apply {
-        setTextColor(yellow); gravity = Gravity.CENTER
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        minHeight = dp(48); isClickable = true
-        setOnClickListener { action() }
-    }
-    private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
-    private fun label(text: String, size: Float) = TextView(context).apply {
-        this.text = text; textSize = size; setTextColor(Color.WHITE)
-        setPadding(dp(2), dp(6), dp(2), dp(6))
-    }
-    private fun button(text: String, action: () -> Unit) = Button(context).apply {
-        this.text = text; isAllCaps = false; setTextColor(yellow)
-        background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(12).toFloat() }
-        backgroundTintList = ColorStateList.valueOf(0xff242629.toInt())
-        setPadding(dp(12), dp(8), dp(12), dp(8))
-        setOnClickListener { action() }
+    fun renderFilter(active: PhotoFilter, visible: Int, enabled: Boolean) {
+        count.text=visible.toString()
+        filters.forEach { (filter,pair) ->
+            pair.first.setTextColor(if(filter==active) AppUi.yellow else AppUi.muted)
+            pair.first.isSelected=filter==active;pair.first.isEnabled=enabled
+            pair.second.setBackgroundColor(if(filter==active) AppUi.yellow else AppUi.line)
+        }
     }
 }

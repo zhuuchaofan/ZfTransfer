@@ -11,11 +11,14 @@ class PhotoGrid(context: Context) : GridView(context) {
     var canReadMore = false
     var onReadMore: () -> Unit = {}
     private var scrolling = false
+    private var browsing = false
+    fun endBrowseGesture() { scrolling = false; browsing = false }
     var onBrowseGesture: () -> Unit = {}
     init {
         setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {
                 scrolling = state != android.widget.AbsListView.OnScrollListener.SCROLL_STATE_IDLE
+                if (!scrolling) browsing = false
                 if (scrolling) maybeReadMore(firstVisiblePosition, childCount, count)
             }
             override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
@@ -24,13 +27,16 @@ class PhotoGrid(context: Context) : GridView(context) {
         })
     }
     private fun maybeReadMore(first: Int, visible: Int, total: Int) {
-        if (!scrolling || dragging || !editable || !canReadMore || total == 0 || visible == 0) return
+        if (!scrolling || !browsing || dragging || !editable || !canReadMore || total == 0 || visible == 0) return
         if (first + visible < total - 6) return
         onReadMore()
     }
     var editable = true
     var onRangeStart: (Int) -> Unit = {}
     var onRangeMove: (Int) -> Unit = {}
+    var onToggle: (Int) -> Unit = {}
+    private var checkTapPosition = INVALID_POSITION
+    private var checkTapObject: Any? = null
     private var downX = 0f
     private var downY = 0f
     private var lastX = 0f
@@ -74,23 +80,44 @@ class PhotoGrid(context: Context) : GridView(context) {
         lastX = event.x; lastY = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x; downY = event.y
+                downX = event.x; downY = event.y; browsing = false
                 onBrowseGesture()
+                checkTapPosition = INVALID_POSITION
+                checkTapObject = null
+                val hit = pointToPosition(event.x.toInt(),event.y.toInt())
+                val child = getChildAt(hit-firstVisiblePosition)
+                val touch = 44 * resources.displayMetrics.density
+                if(editable && hit!=INVALID_POSITION && child!=null && event.x>=child.right-touch && event.y<=child.top+touch) {
+                    checkTapPosition=hit;checkTapObject=adapter.getItem(hit)
+                }
                 if (editable) postDelayed(startDrag, ViewConfiguration.getLongPressTimeout().toLong())
             }
             MotionEvent.ACTION_MOVE -> {
                 if (dragging) { selectAtPointer(); return true }
-                if (abs(event.x - downX) > slop || abs(event.y - downY) > slop) removeCallbacks(startDrag)
+                if (event.y - downY < -slop) browsing = true
+                if (abs(event.x - downX) > slop || abs(event.y - downY) > slop) {
+                    removeCallbacks(startDrag);checkTapPosition=INVALID_POSITION
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(startDrag); removeCallbacks(edgeScroll)
+                if (!dragging && event.actionMasked==MotionEvent.ACTION_UP && checkTapPosition!=INVALID_POSITION) {
+                    val position=checkTapPosition
+                    checkTapPosition=INVALID_POSITION
+                    val cancel=MotionEvent.obtain(event);cancel.action=MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancel);cancel.recycle()
+                    if(editable && position<adapter.count && adapter.getItem(position)==checkTapObject) onToggle(position)
+                    checkTapObject=null
+                    return true
+                }
+                checkTapPosition=INVALID_POSITION;checkTapObject=null
                 if (dragging) {
                     dragging = false
                     parent.requestDisallowInterceptTouchEvent(false)
                     return true
                 }
             }
-            MotionEvent.ACTION_POINTER_DOWN -> removeCallbacks(startDrag)
+            MotionEvent.ACTION_POINTER_DOWN -> { removeCallbacks(startDrag);checkTapPosition=INVALID_POSITION }
         }
         return super.dispatchTouchEvent(event)
     }

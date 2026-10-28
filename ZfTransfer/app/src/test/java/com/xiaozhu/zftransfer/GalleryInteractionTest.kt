@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GalleryInteractionTest {
+    @Test fun historicalAlbumPermissionDoesNotCreateImportEvidence() {
+        assertTrue(ImportEvidence.includeLocal(false, true))
+        assertFalse(ImportEvidence.confirmsLocal(false, false))
+        assertFalse(ImportEvidence.includeLocal(false, false))
+    }
+    @Test fun ownFilesAndExistingRecordsRemainTrustedWithoutBroadPermission() {
+        assertTrue(ImportEvidence.includeLocal(true, false))
+        assertTrue(ImportEvidence.confirmsLocal(true, false))
+        assertTrue(ImportEvidence.confirmsLocal(false, true))
+    }
     private fun queuedPhoto(handle: Long) = io.github.noisetta.nikonpull.ptp.CameraObject(handle, 1, 0x3801, 100, 10, "photo$handle.jpg", "20261028T120000")
     @Test fun zoomAnimationMidpointPreservesTappedImagePoint() {
         val state = PhotoZoomState().apply { fit(1000f,800f,4000f,2000f) }
@@ -382,13 +392,13 @@ class GalleryInteractionTest {
         val idle = TaskState()
         org.junit.Assert.assertTrue(idle.showRemaining(2))
         org.junit.Assert.assertFalse(idle.showRemaining(0))
-        org.junit.Assert.assertEquals("再次导入这张原图", idle.previewImportLabel(1, true))
+        org.junit.Assert.assertEquals("再次导入", idle.previewImportLabel(1, true))
         val checking = TaskState(UserOperation.IMPORT)
         org.junit.Assert.assertFalse(checking.showRemaining(2))
         org.junit.Assert.assertEquals("正在处理…", checking.previewImportLabel(1, false))
         val downloading = checking.copy(transfer = ImportProgress(1, 42))
         org.junit.Assert.assertEquals("正在导入 42%", downloading.previewImportLabel(1, false))
-        org.junit.Assert.assertEquals("正在导入其他照片 42%", downloading.previewImportLabel(2, false))
+        org.junit.Assert.assertEquals("其他照片导入 42%", downloading.previewImportLabel(2, false))
         org.junit.Assert.assertEquals(0, idle.percentage)
         org.junit.Assert.assertEquals(42, downloading.percentage)
     }
@@ -418,5 +428,36 @@ class GalleryInteractionTest {
         completions.record(3)
         org.junit.Assert.assertEquals(listOf(3L), completions.since(cursor).map { it.handle })
         org.junit.Assert.assertTrue(completions.since(cursor).last().sequence > cursor)
+    }
+    @org.junit.Test fun filtersKeepCameraOrderAndOnlyTrustVerifiedHandles() {
+        val a = io.github.noisetta.nikonpull.ptp.CameraObject(1,1,0x3801,100,0,"same.JPG","date")
+        val b = a.copy(handle=2)
+        val c = a.copy(handle=3)
+        val all = listOf(a,b,c)
+        org.junit.Assert.assertEquals(all,PhotoCatalog.visible(all,setOf(2),PhotoFilter.ALL))
+        org.junit.Assert.assertEquals(listOf(b),PhotoCatalog.visible(all,setOf(2),PhotoFilter.IMPORTED))
+        org.junit.Assert.assertEquals(listOf(a,c),PhotoCatalog.visible(all,setOf(2),PhotoFilter.NOT_IMPORTED))
+    }
+    @org.junit.Test fun removedImportEvidenceImmediatelyRemovesImportedMembership() {
+        val a = io.github.noisetta.nikonpull.ptp.CameraObject(1,1,0x3801,100,0,"a.JPG","date")
+        org.junit.Assert.assertEquals(listOf(a),PhotoCatalog.visible(listOf(a),setOf(1),PhotoFilter.IMPORTED))
+        org.junit.Assert.assertTrue(PhotoCatalog.visible(listOf(a),emptySet(),PhotoFilter.IMPORTED).isEmpty())
+        org.junit.Assert.assertEquals(listOf(a),PhotoCatalog.visible(listOf(a),emptySet(),PhotoFilter.NOT_IMPORTED))
+    }
+    @org.junit.Test fun previewDoesNotJumpWhenImportedPhotoLeavesActiveFilter() {
+        val a = io.github.noisetta.nikonpull.ptp.CameraObject(1,1,0x3801,100,0,"a.JPG","date")
+        val b = a.copy(handle=2)
+        val c = a.copy(handle=3)
+        val result = PhotoCatalog.appendPreview(listOf(a,b),listOf(a,b,c),setOf(1),PhotoFilter.NOT_IMPORTED)
+        org.junit.Assert.assertEquals(listOf(a,b,c),result)
+        org.junit.Assert.assertEquals(listOf(b,c),PhotoCatalog.visible(listOf(a,b,c),setOf(1),PhotoFilter.NOT_IMPORTED))
+    }
+    @org.junit.Test fun previewAppendDeduplicatesAndRespectsImportedFilter() {
+        val a = io.github.noisetta.nikonpull.ptp.CameraObject(1,1,0x3801,100,0,"a.JPG","date")
+        val b=a.copy(handle=2)
+        val c=a.copy(handle=3)
+        org.junit.Assert.assertEquals(listOf(a,c),PhotoCatalog.appendPreview(listOf(a),listOf(a,b,c),setOf(1,3),PhotoFilter.IMPORTED))
+        org.junit.Assert.assertEquals(listOf(a,b,c),PhotoCatalog.appendPreview(listOf(a,b),listOf(a,b,c),emptySet(),PhotoFilter.ALL))
+        org.junit.Assert.assertTrue(PhotoCatalog.visible(emptyList(),setOf(1),PhotoFilter.IMPORTED).isEmpty())
     }
 }

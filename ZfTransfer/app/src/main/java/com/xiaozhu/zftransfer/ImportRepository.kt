@@ -58,7 +58,9 @@ class ImportRepository(private val resolver: ContentResolver, private val prefs:
                 "相册文件发布失败"
             }
             published = true
-            if (key != null) check(prefs.edit().putString(key, uri.toString()).commit()) { "无法保存导入记录" }
+            val record = prefs.edit().putString("import_uri_" + uri.lastPathSegment, uri.toString())
+            if (key != null) record.putString(key, uri.toString())
+            check(record.commit()) { "无法保存导入记录" }
             log("Saved original JPEG; bytes=$count")
         } finally {
             if (!published) resolver.delete(uri, null, null)

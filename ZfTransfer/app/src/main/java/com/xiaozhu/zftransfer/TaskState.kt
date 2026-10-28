@@ -6,10 +6,10 @@ data class TaskState(val operation: UserOperation? = null, val transfer: ImportP
     val percentage get() = transfer?.percentage ?: 0
     fun previewImportLabel(handle: Long, imported: Boolean): String = when {
         running && transfer?.handle == handle -> "正在导入 ${transfer.percentage}%"
-        running && transfer != null -> "正在导入其他照片 ${transfer.percentage}%"
+        running && transfer != null -> "其他照片导入 ${transfer.percentage}%"
         running -> "正在处理…"
-        imported -> "再次导入这张原图"
-        else -> "导入这张原图"
+        imported -> "再次导入"
+        else -> "导入原图"
     }
     fun showRemaining(remaining: Int) = !running && remaining > 0
 }

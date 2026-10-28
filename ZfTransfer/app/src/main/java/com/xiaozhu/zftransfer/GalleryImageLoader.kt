@@ -100,7 +100,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
                 if (bitmap != null) ready(Preview(bitmap, uri != null || original != null, when {
                     uri != null -> "本地原图预览 · 双击或双指缩放"
                     original != null -> "原图预览 · 双击或双指缩放"
-                    else -> "清晰预览 ${bitmap.width} × ${bitmap.height} · 双击或双指缩放"
+                    else -> "清晰预览 · 双击或双指缩放"
                 })) else if (allowFetch) {
                     runtime.requestMediumPreview(obj, key, { !closed && current() && session == runtime.imageSession }) { result ->
                         if (!closed && current()) {

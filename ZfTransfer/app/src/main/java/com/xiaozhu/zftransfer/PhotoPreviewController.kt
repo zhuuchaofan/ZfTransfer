@@ -20,7 +20,9 @@ class PhotoPreviewController(
     private val toggle: (CameraObject) -> Unit,
     private val showNotice: (String, String) -> Unit,
 ) : AutoCloseable {
-    private val photos get() = runtime.photos
+    private var previewPhotos = emptyList<CameraObject>()
+    private val photos get() = previewPhotos
+    private var filterAtOpen = PhotoFilter.ALL
     private val imported get() = runtime.imported
     private val busy get() = runtime.busy
     private val client get() = runtime.client
@@ -41,11 +43,12 @@ class PhotoPreviewController(
     private var previewOriginalAvailable = false
     private var previewChecking = false
     private var originalDialog: Dialog? = null
-    private lateinit var previewImport: Button
+    private lateinit var previewImport: ProgressActionButton
+    private lateinit var previewCounter: TextView
     private lateinit var previewStrip: PhotoFilmstrip
     private lateinit var previewSelect: TextView
-    private lateinit var previewPrevious: TextView
-    private lateinit var previewNext: TextView
+    private lateinit var previewPrevious: ImageButton
+    private lateinit var previewNext: ImageButton
     private val yellow = 0xfff2c45b.toInt()
     private val surfaceColor = 0xff101112.toInt()
     private val muted = 0xffa1a4aa.toInt()
@@ -70,24 +73,6 @@ class PhotoPreviewController(
             updateOriginalAction()
         }
     }
-    private fun textAction(text: String, action: () -> Unit) = label(text, 14f).apply {
-        setTextColor(yellow); gravity = Gravity.CENTER
-        setPadding(dp(12), dp(12), dp(12), dp(12))
-        minHeight = dp(48); isClickable = true
-        setOnClickListener { action() }
-    }
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun label(text: String, size: Float) = TextView(activity).apply {
-        this.text = text; textSize = size; setTextColor(Color.WHITE)
-        setPadding(dp(2), dp(6), dp(2), dp(6))
-    }
-    private fun button(text: String, action: () -> Unit) = Button(activity).apply {
-        this.text = text; isAllCaps = false; setTextColor(yellow)
-        background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(12).toFloat() }
-        backgroundTintList = ColorStateList.valueOf(0xff242629.toInt())
-        setPadding(dp(12), dp(8), dp(12), dp(8))
-        setOnClickListener { action() }
-    }
     private fun updateOriginalAction() {
         previewHigh.text = "原图"
         previewHigh.visibility = View.VISIBLE
@@ -96,26 +81,18 @@ class PhotoPreviewController(
         previewHigh.contentDescription = if (previewOriginalAvailable) "当前为原图预览" else "查看原图"
     }
     private fun confirmOriginalPreview() {
-        val obj = photos.getOrNull(index) ?: return
-        if (!previewHigh.isEnabled) return
-        val generation = previewGeneration
-        val size = "%.1f".format(obj.size / 1048576.0)
+        val obj=photos.getOrNull(index) ?: return
+        if(!previewHigh.isEnabled) return
+        if(obj.handle in imported) { loadDetailedPreview(obj,previewGeneration);return }
+        val generation=previewGeneration
+        val size="%.1f".format(obj.size/1048576.0)
         originalDialog?.dismiss()
-        val dialog = Dialog(activity)
-        originalDialog = dialog
-        val sheet = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(20), dp(20), dp(24))
-            background = GradientDrawable().apply { setColor(0xff242629.toInt()); cornerRadius = dp(20).toFloat() }
+        val sheet=AppSheet(activity,"查看原图");originalDialog=sheet
+        sheet.message("需要从相机加载约 $size MB，用于查看细节。查看原图不会保存到手机相册。")
+        sheet.action("加载原图（$size MB）",true) {
+            if(generation==previewGeneration && !previewOriginalAvailable && !busy.get()) downloadDetailedPreview()
         }
-        sheet.addView(label("查看原图", 21f))
-        sheet.addView(label("需要从相机加载约 $size MB，用于查看细节。查看原图不会保存到手机相册。", 14f).apply { setTextColor(muted) })
-        sheet.addView(button("加载原图（$size MB）") {
-            dialog.dismiss()
-            if (generation == previewGeneration && !previewOriginalAvailable && !busy.get()) downloadDetailedPreview()
-        }.apply { backgroundTintList = ColorStateList.valueOf(yellow); setTextColor(surfaceColor) }, LinearLayout.LayoutParams(-1, dp(52)))
-        sheet.addView(textAction("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(-1, dp(48)))
-        dialog.setContentView(sheet); dialog.show()
-        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); setLayout(-1, -2); setGravity(Gravity.BOTTOM); setDimAmount(0.65f) }
+        sheet.action("取消");sheet.show()
     }
     private fun downloadDetailedPreview() {
         if (busy.get()) return
@@ -147,7 +124,10 @@ class PhotoPreviewController(
             report("原图已加载。需要保存时，请点击导入。")
         }
     }
-    fun show(position: Int) {
+    fun open(position: Int, items: List<CameraObject>, filter: PhotoFilter) {
+        previewPhotos=items.toList();filterAtOpen=filter;show(position)
+    }
+    private fun show(position: Int) {
         if (position !in photos.indices) return
         index = position
         if (preview?.isShowing == true) {
@@ -163,7 +143,7 @@ class PhotoPreviewController(
         previewImage = dialog.image; previewStrip = dialog.strip; previewName = dialog.name
         previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
         previewPrevious = dialog.previous; previewNext = dialog.next
-        previewImport = dialog.import; previewSelect = dialog.select
+        previewImport = dialog.import; previewSelect = dialog.select; previewCounter = dialog.counter
         previewStrip.canReadMore = { !busy.get() && client != null && cursor < handles.size }
         previewStrip.onReadMore = { runtime.readPage(automatic = true) }
         previewStrip.onBrowseGesture = runtime::beginBrowseGesture
@@ -178,13 +158,16 @@ class PhotoPreviewController(
         previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
         previewSelect.text = if (isSelected(obj.handle)) "移出选择" else "加入选择"
         previewImport.text = runtime.taskState.previewImportLabel(obj.handle, obj.handle in imported)
+        previewImport.setTransferProgress(if(runtime.taskState.running) runtime.taskState.transfer?.percentage else null)
         previewImport.isEnabled = !busy.get() && client != null
         previewSelect.isEnabled = !busy.get()
+        previewSelect.alpha = if(previewSelect.isEnabled) 1f else .4f
+        previewCounter.text = "${index+1} / ${photos.size}"
     }
     private fun renderPreview() {
         val obj = photos[index]
         val generation = ++previewGeneration
-        previewQuality.text = "快速缩略预览 · 正在检查本地原图"
+        previewQuality.text = "正在加载清晰预览…"
         previewChecking = true; previewOriginalAvailable = false
         updateOriginalAction()
         previewImage.showPhoto(thumbnail(obj.handle), detailed = false)
@@ -202,6 +185,7 @@ class PhotoPreviewController(
     }
     fun refresh() {
         if (preview?.isShowing != true) return
+        previewPhotos=PhotoCatalog.appendPreview(previewPhotos,runtime.photos,imported,filterAtOpen)
         refreshActions()
         updateOriginalAction()
         previewStrip.submit(photos, index, ::thumbnail, ::show)
