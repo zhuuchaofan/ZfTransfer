@@ -3,7 +3,6 @@ package com.xiaozhu.zftransfer
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType

@@ -15,7 +15,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
         const val WIFI_REQUEST_RETRY_MS = 60_000L
         const val PAGE_SIZE = 40
         const val GRID_THUMB_EDGE = 1024
-        const val LOG_LIMIT = 400
         const val THUMB_CACHE_BYTES = 16 * 1024 * 1024
         const val MEDIUM_PREVIEW_CACHE_BYTES = 48L * 1024 * 1024
     }
@@ -63,7 +62,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
     @Volatile var revision = 0L
     private var issue: Pair<UserIssue, Boolean>? = null
     private val listeners = linkedSetOf<() -> Unit>()
-    private val logs = ArrayDeque<String>()
     val cameraWifi = CameraWifi(context, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive ->
         if (!connectionReady) presentIssue(issue, interactive)
         else log("Ignoring obsolete Wi-Fi request failure; verified camera session is connected")
@@ -78,15 +76,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
     fun presentIssue(value: UserIssue, interactive: Boolean = true) {
         ui { issue = value to interactive; message = value.title + "\n" + value.message; changed() }
     }
-    @Synchronized fun log(message: String) {
-        if (logs.size >= LOG_LIMIT) logs.removeFirst()
-        logs.addLast("${java.time.LocalTime.now().withNano(0)} $message")
-        android.util.Log.i("ZfTransfer", message)
-    }
-    @Synchronized fun logText() = logs.joinToString("\n")
+    fun log(message: String) { android.util.Log.i("ZfTransfer", message) }
     fun thumbnailFile(handle: Long, session: String = gallery.imageSession) = java.io.File(cacheDir, "thumb_${session}_$handle.jpg")
     private fun savedExists(obj: CameraObject) = imports.verifiedUri(obj) != null
-    private fun duplicateKey(obj: CameraObject) = imports.key(obj)
     private fun wifiPermission() = if (android.os.Build.VERSION.SDK_INT >= 33) "android.permission.NEARBY_WIFI_DEVICES" else "android.permission.ACCESS_FINE_LOCATION"
     fun serviceStarted() { serviceActive = true; watch(); revision++; changed() }
     fun watch() { runCatching { cameraWifi.watch() }.onFailure { report("无法监听 Wi-Fi 状态，可手动重试连接。") } }
@@ -271,7 +263,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
         report("已连接 ${info.displayName}，正在读取照片…")
         lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
-    fun beginBrowseGesture() = gallery.beginBrowseGesture()
     fun readPage(automatic: Boolean = false) {
         if (!gallery.admitPage(busy.get(), client != null, automatic)) return
         task { loadPage(client ?: error("请先连接相机")) }

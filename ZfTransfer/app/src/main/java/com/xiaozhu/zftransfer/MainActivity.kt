@@ -3,9 +3,7 @@ package com.xiaozhu.zftransfer
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.content.res.ColorStateList
-import android.view.Gravity
 import android.view.ViewGroup
 import android.app.Dialog
 import android.net.Network
@@ -71,7 +69,6 @@ class MainActivity : Activity() {
     private var range: RangeSelection? = null
     private var issueDialog: Dialog? = null
     private val yellow = 0xfff2c45b.toInt()
-    private val surfaceColor = 0xff101112.toInt()
     private val muted = 0xffa1a4aa.toInt()
     private val adapter = object : BaseAdapter() {
         override fun hasStableIds() = true
@@ -131,7 +128,7 @@ class MainActivity : Activity() {
             updateSelection()
             previewController.refresh()
             photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
-                images.upgradeGrid(it, duplicateKey(it), imageSession)
+                images.upgradeGrid(it, imports.key(it), imageSession)
             }
         }
         if (resumed) {
@@ -195,7 +192,7 @@ class MainActivity : Activity() {
         status = screen.status
         grid = screen.grid
         grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED && activeFormat.available) runtime.readPage(automatic = true) }
-        grid.onBrowseGesture = runtime::beginBrowseGesture
+        grid.onBrowseGesture = runtime.gallery::beginBrowseGesture
         selectionLabel = screen.selectionLabel
         cameraLabel = screen.cameraLabel
         selectAll = screen.selectAll
@@ -502,7 +499,6 @@ class MainActivity : Activity() {
         retryTransfer.isEnabled = !busy.get() && client != null
     }
     private fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) = runtime.startImport(items, skipExisting, retry)
-    private fun duplicateKey(obj: CameraObject): String? = imports.key(obj)
     private fun showLicense() {
         newSheet("关于 Zf 传图").apply {
             message("版本 ${packageManager.getPackageInfo(packageName,0).versionName?.removeSuffix("-test")}\n遵循 GPL-3.0 开源许可证。\n基于 noisetta/Nikon-Pull 与 jaminxx-aha/ZPill 构建。\n源代码：github.com/zhuuchaofan/ZfTransfer")

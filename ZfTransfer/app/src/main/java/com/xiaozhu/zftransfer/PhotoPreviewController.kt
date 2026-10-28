@@ -1,10 +1,6 @@
 package com.xiaozhu.zftransfer
 
 import android.app.Activity
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.content.res.ColorStateList
-import android.view.Gravity
 import android.app.Dialog
 import android.view.View
 import android.widget.*
@@ -50,9 +46,6 @@ class PhotoPreviewController(
     private lateinit var previewSelect: TextView
     private lateinit var previewPrevious: ImageButton
     private lateinit var previewNext: ImageButton
-    private val yellow = 0xfff2c45b.toInt()
-    private val surfaceColor = 0xff101112.toInt()
-    private val muted = 0xffa1a4aa.toInt()
     private val resources get() = activity.resources
     private fun ui(action: () -> Unit) { activity.runOnUiThread { if (!stopped && !activity.isDestroyed) action() } }
     private fun previewKey(obj: CameraObject) = images.key(obj)
@@ -147,7 +140,7 @@ class PhotoPreviewController(
         previewImport = dialog.import; previewSelect = dialog.select; previewCounter = dialog.counter
         previewStrip.canReadMore = { !busy.get() && client != null && cursor < handles.size }
         previewStrip.onReadMore = { runtime.readPage(automatic = true) }
-        previewStrip.onBrowseGesture = runtime::beginBrowseGesture
+        previewStrip.onBrowseGesture = runtime.gallery::beginBrowseGesture
         renderPreview()
         dialog.show()
         refreshActions()

@@ -3,7 +3,6 @@ package com.xiaozhu.zftransfer
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.view.View
 import android.view.MotionEvent
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
