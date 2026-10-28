@@ -32,6 +32,14 @@
 
 公开 APK 使用独立发布签名。此前安装了开发测试签名包的用户，无法直接覆盖安装；请先保留现有应用与记录，确认迁移方案后再处理。不要仅为尝试升级就卸载或清除数据。
 
+## 每次提交的自动编译
+
+推送提交后，[GitHub Actions](https://github.com/zhuuchaofan/ZfTransfer/actions/workflows/android-apk.yml) 自动运行单元测试并生成 APK，PR 和手动运行也支持。同一分支连续推送时，优先完成最新一次。
+
+打开对应成功运行，在 **Artifacts** 下载 `ZfTransfer-APK-…`，解压后得到 APK、SHA256 校验和与构建信息。安装包保留30天，测试报告保留14天；下载需要登录 GitHub。
+
+这些是公开测试签名包，不能覆盖使用专用发布签名的 Releases 安装。普通试用请优先下载页首的 Releases 版本；自动编译不会自行发布或替换该版本，也不使用发布私钥。自动测试不能替代手机与相机实测。
+
 ## 开源与反馈
 
 遵循 [GPL-3.0](ZfTransfer/LICENSE)。第三方归属见 [THIRD_PARTY.md](ZfTransfer/THIRD_PARTY.md)。
