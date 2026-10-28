@@ -25,21 +25,14 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private val preparation = ConnectionPreparation()
     @Volatile private var readyClient: PtpIpClient? = null
     val connectionReady get() = readyClient != null && readyClient === client
-    private var pendingConnect: Runnable? = null
-    private var pendingNetwork: Network? = null
-    val connectionPending get() = pendingConnect != null
-    private fun cancelPendingConnect() {
-        pendingConnect?.let { connectionHandler.removeCallbacks(it) }
-        pendingConnect = null; pendingNetwork = null
-    }
     val connectionHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val pendingConnect = PendingConnect(connectionHandler)
+    val connectionPending get() = pendingConnect.active
+    private val wifiRetry = WifiProfileRetry(WIFI_REQUEST_RETRY_MS)
     var foreground = false
     var resumedAt = 0L
     @Volatile var userStopped = false
-    var stoppedNetwork: Long? = null
-    var profileAttempted = false
-    private var lastWifiAttempt = 0L
-    private var wifiWasAvailable = false
+    var profileAttempted by wifiRetry::attempted
     var serviceActive = false
     private val prefs = context.getSharedPreferences("transfers", 0)
     private val wifiStore = WifiProfileStore(context)
@@ -116,13 +109,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
     fun requestWifi(profile: WifiProfile, automatic: Boolean) {
         if (!ensureService()) return
         userStopped = false
-        cancelPendingConnect(); preparation.reset()
+        pendingConnect.cancel(); preparation.reset()
         session.disconnect()
-        lastWifiAttempt = now()
+        wifiRetry.requested(now())
         cameraWifi.request(profile, !automatic)
     }
     fun stop() {
-        userStopped = true; cancelPendingConnect(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
+        userStopped = true; pendingConnect.cancel(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
         session.disconnect(); cameraWifi.close(); revision++
         report("已断开连接。成功导入的照片仍保留，未完成任务可稍后重试。")
         changed()
@@ -143,7 +136,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         }, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
     }
     private fun maybeAutoConnect() {
-        if (cameraWifi.requestedNetwork != null) wifiWasAvailable = true
+        if (cameraWifi.requestedNetwork != null) wifiRetry.networkAvailable()
         if ((!foreground && !lifetime.desired) || busy.get() || client != null || userStopped) return
         val settling = if (foreground) FOREGROUND_SETTLE_MS - (android.os.SystemClock.elapsedRealtime() - resumedAt) else 0L
         if (settling > 0) { connectionHandler.postDelayed({ if (!userStopped) cameraWifi.schedule() }, settling); return }
@@ -157,7 +150,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 connectCamera(endpoint.network, automatic = true)
 
             }
-        } else if ((!profileAttempted || (wifiWasAvailable && now() - lastWifiAttempt >= WIFI_REQUEST_RETRY_MS)) && !cameraWifi.hasActiveRequest) {
+        } else if (wifiRetry.due(now()) && !cameraWifi.hasActiveRequest) {
             val saved = wifiStore.load()
             if (saved != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
                 profileAttempted = true; requestWifi(saved, true)
@@ -167,7 +160,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private fun wifiLost(network: Network) {
         if (userStopped) return
         autoGate.lost(network.networkHandle)
-        if (pendingNetwork == network) { cancelPendingConnect(); preparation.resetNetwork() }
+        if (pendingConnect.network == network) { pendingConnect.cancel(); preparation.resetNetwork() }
         if (sessionNetwork == network) {
             session.disconnect()
             report("相机 Wi-Fi 已断开。重新连接相机热点后将自动识别，已导入照片仍保留。")
@@ -224,14 +217,12 @@ class ConnectionRuntime(private val context: android.content.Context) {
         }
         if (!ensureService()) return
         val wait = preparation.waitMillis(selectedEndpoint.network.networkHandle, selectedEndpoint.address, now())
-        cancelPendingConnect()
+        pendingConnect.cancel()
         if (wait > 0) {
             report("已识别相机 Wi-Fi，正在连接…")
-            pendingNetwork = selectedEndpoint.network
-            pendingConnect = Runnable {
-                pendingConnect = null; pendingNetwork = null
+            pendingConnect.schedule(selectedEndpoint.network, wait) {
                 if (lifetime.desired && !userStopped) connectCamera(selectedEndpoint.network, automatic)
-            }.also { connectionHandler.postDelayed(it, wait) }
+            }
             revision++; changed()
             return
         }
