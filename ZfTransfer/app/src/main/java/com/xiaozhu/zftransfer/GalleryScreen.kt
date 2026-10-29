@@ -57,7 +57,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val retryTransfer = AppUi.button(context,"继续导入未完成照片") { actions.retry() }.apply { visibility=View.GONE }
     val footer = LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; visibility=View.GONE }
     val emptyTitle = text("把照片，带回手机",21f).apply { gravity=Gravity.CENTER }
-    val emptyHint = text("连接相机 Wi-Fi 后，将自动识别",14f,AppUi.muted).apply { gravity=Gravity.CENTER }
+    val emptyHint = text("先在相机上开启 Wi-Fi，应用会自动识别并连接。断开后相机会自动关闭 Wi-Fi，下次需要重新开启。",14f,AppUi.muted).apply { gravity=Gravity.CENTER }
     val connect = AppUi.button(context,"连接相机",true) { actions.connect() }
     val connectionActions = LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
     private val filters = linkedMapOf<PhotoFilter, Pair<TextView,View>>()

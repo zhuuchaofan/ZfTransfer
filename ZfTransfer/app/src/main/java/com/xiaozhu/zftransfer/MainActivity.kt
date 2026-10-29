@@ -464,7 +464,7 @@ class MainActivity : Activity() {
             else -> "没有可浏览的照片"
         }
         emptyHint.text=when {
-            connectionEmpty -> "连接相机 Wi-Fi 后，将自动识别"
+            connectionEmpty -> "先在相机上开启 Wi-Fi，应用会自动识别并连接。断开后相机会自动关闭 Wi-Fi，下次需要重新开启。"
             activeFilter!=PhotoFilter.ALL -> "换个筛选看看"
             else -> "相机中暂未找到可浏览的文件"
         }

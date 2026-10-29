@@ -10,7 +10,7 @@ data class UserIssue(val title: String, val message: String, val recovery: Recov
 
 /** Raw provider/socket messages belong in diagnostics, never in user-facing copy. */
 object UserIssues {
-    fun wifiUnavailable() = UserIssue("未能连接相机 Wi-Fi", "请确认相机热点仍开启、名称和密码正确，并允许系统连接请求。也可以手动连接相机 Wi-Fi 后返回应用。", Recovery.WIFI_SETTINGS)
+    fun wifiUnavailable() = UserIssue("未能连接相机 Wi-Fi", "请先确认相机的 Wi-Fi 已开启：相机在断开连接后会自动关闭热点，需要在相机上重新开启。再检查名称和密码是否正确，并允许系统连接请求。也可以手动连接相机 Wi-Fi 后返回应用。", Recovery.WIFI_SETTINGS)
 
     fun from(error: Throwable, operation: UserOperation): UserIssue {
         val chain = generateSequence(error) { it.cause }.take(8).toList()

@@ -97,7 +97,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     fun stop() {
         userStopped = true; pendingConnect.cancel(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
         session.disconnect(); cameraWifi.close(); revision++
-        report("已断开连接。成功导入的照片仍保留，未完成任务可稍后重试。")
+        report("已断开连接。相机会随之自动关闭 Wi-Fi，下次连接前请先在相机上重新开启。成功导入的照片仍保留，未完成任务可稍后重试。")
         changed()
     }
     init {
@@ -143,7 +143,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         if (pendingConnect.network == network) { pendingConnect.cancel(); preparation.resetNetwork() }
         if (sessionNetwork == network) {
             session.disconnect()
-            report("相机 Wi-Fi 已断开。重新连接相机热点后将自动识别，已导入照片仍保留。")
+            report("相机 Wi-Fi 已断开（相机断开连接后会自动关闭 Wi-Fi）。请在相机上重新开启 Wi-Fi，应用会自动识别；已导入照片仍保留。")
             revision++; changed()
         }
     }
