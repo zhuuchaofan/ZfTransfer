@@ -274,10 +274,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
             check(client === c) { "已停止读取" }
             val obj = c.getObjectInfo(gallery.handles[gallery.cursor])
             gallery.advance()
-            if (obj.isJpeg) {
+            if (MediaFormat.of(obj) != null) {
                 val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpResponseException) {
                     // A PTP error has a fully consumed response; transport errors abort the task.
-                    log("Thumbnail unavailable; keeping original download")
+                    log("Thumbnail unavailable for ${obj.filename}")
                     null
                 }
                 val bitmap = thumb?.let {
@@ -292,7 +292,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 }
                 if (bitmap != null) runCatching { thumbnailFile(obj.handle).writeBytes(thumb!!) }
                     .onFailure { log("Thumbnail cache write failed: ${it.javaClass.simpleName}: ${it.message}") }
-                val exists = savedExists(obj)
+                val exists = obj.canImport && savedExists(obj)
                 ui {
                     if (!gallery.add(pageSession, obj, exists)) return@ui
                     if (bitmap != null) thumbs.put(obj.handle, bitmap)
@@ -302,7 +302,11 @@ class ConnectionRuntime(private val context: android.content.Context) {
             }
             report("正在读取照片…")
         }
-        ui { message = "已加载 ${gallery.photos.size} 张照片${if (gallery.hasMore) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed() }
+        ui {
+            // The photo list is only touched on the main thread.
+            log("Formats read so far: ${MediaFormat.entries.filter { it != MediaFormat.ALL }.joinToString { f -> "${f.label}=${gallery.photos.count { f.matches(it) }}" }}")
+            message = "已加载 ${gallery.photos.size} 个文件${if (gallery.hasMore) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed()
+        }
     }
     private val mediumFetcher by lazy {
         MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
@@ -318,7 +322,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val identity = cameraIdentity
         val session = gallery.imageSession
         worker.execute {
-            val verified = snapshot.filter { savedExists(it) }.map { it.handle }.toSet()
+            val verified = snapshot.filter { it.canImport && savedExists(it) }.map { it.handle }.toSet()
             ui {
                 if (!busy.get() && identity == cameraIdentity && session == gallery.imageSession) {
                     gallery.replaceEvidence(snapshot.map { it.handle }, verified); revision++; changed()
@@ -338,7 +342,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
             }
         }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet() }
     }
-    fun startImport(items: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
+    fun startImport(requested: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
+        val items = requested.filter { it.canImport }
         if (items.isEmpty() || busy.get()) return
         gallery.completions.beginBatch()
         task(operation = UserOperation.IMPORT) {

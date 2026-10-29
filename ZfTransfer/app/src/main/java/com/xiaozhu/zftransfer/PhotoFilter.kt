@@ -5,10 +5,11 @@ import io.github.noisetta.nikonpull.ptp.CameraObject
 enum class PhotoFilter(val label: String) { ALL("全部"), NOT_IMPORTED("未导入"), IMPORTED("已导入") }
 
 /** File format and import state are independent filter dimensions. HLG is not inferred from a suffix. */
-enum class MediaFormat(val label: String, val available: Boolean = false) {
-    ALL("全部格式",true), JPEG("JPEG",true), RAW("RAW"), VIDEO("视频"), HEIF("HIF / HEIF");
-    fun matches(obj: CameraObject) = this==ALL || this==classify(obj.filename,obj.format)
+enum class MediaFormat(val label: String) {
+    ALL("全部格式"), JPEG("JPEG"), RAW("RAW"), VIDEO("视频"), HEIF("HIF / HEIF");
+    fun matches(obj: CameraObject) = this==ALL || this==of(obj)
     companion object {
+        fun of(obj: CameraObject) = classify(obj.filename,obj.format)
         fun classify(filename: String, ptpFormat: Int = 0): MediaFormat? {
             val suffix=filename.substringAfterLast('.',"").lowercase(java.util.Locale.ROOT)
             return when(suffix) {
@@ -26,6 +27,9 @@ enum class MediaFormat(val label: String, val available: Boolean = false) {
     }
 }
 
+/** Only JPEG can be previewed and imported so far; every other format is browse-only. A suffix wins over the PTP format code. */
+val CameraObject.canImport get() = MediaFormat.of(this)==MediaFormat.JPEG
+
 /** Only verified imports enter the imported filter; no filename or preview-cache guessing. */
 object PhotoCatalog {
     fun visible(photos: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> =
@@ -38,7 +42,7 @@ object PhotoCatalog {
     /** Freeze existing preview membership until dismiss, append only newly eligible photos. */
     fun appendPreview(existing: List<CameraObject>, loaded: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> {
         val known = existing.map { it.handle }.toHashSet()
-        return existing + visible(loaded, verified, filter, format).filter { known.add(it.handle) }
+        return existing + visible(loaded, verified, filter, format).filter { it.canImport && known.add(it.handle) }
     }
 }
 
@@ -53,6 +57,13 @@ object SwipeNavigation {
 }
 
 object CameraCatalogSummary {
+    /** Plain JPEG wording when nothing else was read, otherwise a per-format breakdown of what was read. */
+    fun of(totalFiles: Int, readFiles: Int, loaded: List<CameraObject>): String {
+        val counts = MediaFormat.entries.filter { it!=MediaFormat.ALL }.map { it to loaded.count { obj -> it.matches(obj) } }.filter { it.second>0 }
+        if(counts.all { it.first==MediaFormat.JPEG }) return text(totalFiles,readFiles,loaded.size)
+        val detail=counts.joinToString(" · ") { "${it.first.label} ${it.second}" }
+        return if(readFiles>=totalFiles) "相机共 ${loaded.size} 个：$detail" else "相机共 $totalFiles 个文件 · 已读取 ${loaded.size} 个：$detail"
+    }
     fun text(totalFiles: Int, readFiles: Int, loadedJpegs: Int): String =
         if(readFiles >= totalFiles) "相机共 $loadedJpegs 张 JPEG"
         else "相机共 $totalFiles 个文件 · 已读取 $loadedJpegs 张 JPEG"

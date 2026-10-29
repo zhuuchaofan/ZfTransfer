@@ -19,7 +19,6 @@ class GalleryInteractionTest {
         assertEquals(listOf(raw),PhotoCatalog.visible(items,setOf(2L),PhotoFilter.IMPORTED,MediaFormat.RAW))
         assertEquals(emptyList<Any>(),PhotoCatalog.visible(items,setOf(2L),PhotoFilter.NOT_IMPORTED,MediaFormat.RAW))
         assertEquals(listOf(heif),PhotoCatalog.visible(items,emptySet(),PhotoFilter.ALL,MediaFormat.HEIF))
-        assertFalse(MediaFormat.RAW.available);assertFalse(MediaFormat.VIDEO.available);assertFalse(MediaFormat.HEIF.available)
     }
 
     @Test fun cameraTotalDoesNotConfuseUnclassifiedFilesWithJpegs() {

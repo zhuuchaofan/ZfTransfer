@@ -152,13 +152,18 @@ class MainActivity : Activity() {
             override fun cameraStatus() { if (client == null && !busy.get()) connectCamera() else showSettings() }
             override fun connect() = connectCamera()
             override fun selectAll() { if (!busy.get()) {
-                selectionMode = true; visiblePhotos.forEach { selected[it.handle] = it }; updateSelection()
+                val items = visiblePhotos.filter { it.canImport }
+                if (items.isEmpty()) return
+                selectionMode = true; items.forEach { selected[it.handle] = it }; updateSelection()
             } }
             override fun cancelSelection() { if (!busy.get()) { selected.clear(); selectionMode = false; updateSelection() } }
             override fun preview(handle: Long) {
                 if(activeFilter==PhotoFilter.IMPORTED) { localGallery.open(handle.toInt()); return }
-                val index=visiblePhotos.indexOfFirst { it.handle==handle }
-                if(!busy.get() && index>=0) previewController.open(index,visiblePhotos,activeFilter,activeFormat)
+                val tapped=visiblePhotos.firstOrNull { it.handle==handle } ?: return
+                if(!tapped.canImport) { showNotice("暂不支持预览","${MediaFormat.of(tapped)?.label.orEmpty()} 文件目前只能浏览，预览和导入将在后续版本开放。"); return }
+                val items=visiblePhotos.filter { it.canImport }
+                val index=items.indexOfFirst { it.handle==handle }
+                if(!busy.get() && index>=0) previewController.open(index,items,activeFilter,activeFormat)
             }
             override fun toggle(index: Int) { visiblePhotos.getOrNull(index)?.let { toggle(it) } }
             override fun rangeStart(index: Int) {
@@ -190,7 +195,7 @@ class MainActivity : Activity() {
         screen.localAccess.setOnClickListener {
             requestPermissions(arrayOf(if(android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"),43)
         }
-        grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED && activeFormat.available) runtime.readPage(automatic = true) }
+        grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED) runtime.readPage(automatic = true) }
         grid.onBrowseGesture = runtime.gallery::beginBrowseGesture
         setContentView(screen.root)
         updateRetryControl()
@@ -203,9 +208,9 @@ class MainActivity : Activity() {
     private fun dp(value: Int) = AppUi.dp(this,value)
     private fun showFormatFilter() {
         val sheet=newSheet("格式筛选")
-        sheet.message("与上方导入状态组合筛选。目前支持 JPEG；RAW、视频、HIF / HEIF 的浏览和导入后续开放。")
+        sheet.message("与上方导入状态组合筛选。目前只有 JPEG 可以预览和导入；其他格式可以浏览和筛选，预览与导入后续开放。")
         MediaFormat.entries.forEach { format ->
-            sheet.row((if(activeFormat==format) "✓  " else "") + format.label + if(format.available) "" else " · 后续支持") {
+            sheet.row((if(activeFormat==format) "✓  " else "") + format.label) {
                 sheet.dismiss()
                 if(activeFormat!=format) {
                     activeFormat=format;range=null;grid.endBrowseGesture()
@@ -304,14 +309,15 @@ class MainActivity : Activity() {
     private fun applyRange(end: Int) {
         if (busy.get()) return
         val indices = range?.at(end) ?: return
-        val nextHandles = indices.filter { it in visiblePhotos.indices }.map { visiblePhotos[it].handle }.toSet() + rangeOutside.keys
+        val inRange = indices.filter { it in visiblePhotos.indices && visiblePhotos[it].canImport }
+        val nextHandles = inRange.map { visiblePhotos[it].handle }.toSet() + rangeOutside.keys
         if (nextHandles == selected.keys) return
         selected.clear(); selected.putAll(rangeOutside)
-        indices.filter { it in visiblePhotos.indices }.forEach { selected[visiblePhotos[it].handle] = visiblePhotos[it] }
+        inRange.forEach { selected[visiblePhotos[it].handle] = visiblePhotos[it] }
         updateSelection()
     }
     private fun toggle(obj: CameraObject) {
-        if (busy.get()) return
+        if (busy.get() || !obj.canImport) return
         selectionMode = true
         if (selected.remove(obj.handle) == null) selected[obj.handle] = obj
         updateSelection()
@@ -374,8 +380,8 @@ class MainActivity : Activity() {
         setEnabledDimmed(more, !value && client != null && cursor < handles.size)
         setEnabledDimmed(download, !value && client != null && selected.isNotEmpty())
         previewController.refreshActions()
-        grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED && activeFormat.available
-        grid.canReadMore = activeFormat.available && activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
+        grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED
+        grid.canReadMore = activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
         progress.isIndeterminate = value && runtime.taskState.transfer == null
         progress.visibility = if (value) View.VISIBLE else View.GONE
         screen.renderFilter(activeFilter,if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size,true)
@@ -408,15 +414,9 @@ class MainActivity : Activity() {
         val local=activeFilter==PhotoFilter.IMPORTED
         screen.formatControl.text="格式：${activeFormat.label} ▾"
         screen.catalogSummary.visibility=if(!local && runtime.connectionReady) View.VISIBLE else View.GONE
-        screen.catalogSummary.text=CameraCatalogSummary.text(handles.size,cursor,photos.size)
+        screen.catalogSummary.text=CameraCatalogSummary.of(handles.size,cursor,photos)
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
-        if(!activeFormat.available) {
-            hideCameraControls();screen.localAccess.visibility=View.GONE
-            emptyTitle.text="${activeFormat.label} · 后续支持"
-            emptyHint.text="该格式的浏览和导入尚未开放，可切换为 JPEG 或全部格式"
-            return
-        }
         if(local) {
             hideCameraControls()
             emptyTitle.text=if(localGallery.loading) "正在检查手机照片" else "暂无已导入照片"
@@ -426,7 +426,7 @@ class MainActivity : Activity() {
         val hasMore=client!=null && cursor<handles.size
         val connectionEmpty=photos.isEmpty() && client==null
         footer.visibility=if(photos.isEmpty()) View.GONE else View.VISIBLE
-        selectAll.visibility=if(visiblePhotos.isEmpty()) View.GONE else View.VISIBLE
+        selectAll.visibility=if(visiblePhotos.none { it.canImport }) View.GONE else View.VISIBLE
         cancelSelection.visibility=if(selectionMode) View.VISIBLE else View.GONE
         more.visibility=View.GONE
         screen.connectionActions.visibility=if(connectionEmpty) View.VISIBLE else View.GONE
@@ -443,7 +443,7 @@ class MainActivity : Activity() {
             connectionEmpty -> "连接相机 Wi-Fi 后，将自动识别"
             hasMore -> "已读取的照片中暂无匹配，可继续读取更多"
             activeFilter!=PhotoFilter.ALL -> "换个筛选看看"
-            else -> "相机中暂未找到 JPEG 照片"
+            else -> "相机中暂未找到可浏览的文件"
         }
     }
     private fun requestImport(items: List<CameraObject>) {
