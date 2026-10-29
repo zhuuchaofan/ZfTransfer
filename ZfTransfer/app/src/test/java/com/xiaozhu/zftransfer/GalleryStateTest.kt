@@ -10,53 +10,35 @@ class GalleryStateTest {
     @Test fun resetStartsANewSessionAndDropsPhotosAndEvidence() {
         val gallery = GalleryState()
         val before = gallery.imageSession
-        gallery.add(before, photo(1), verified = true)
+        gallery.setCatalog(before, listOf(photo(1)), setOf(1L))
         gallery.reset()
         assertNotEquals(before, gallery.imageSession)
         assertTrue(gallery.photos.isEmpty())
         assertTrue(gallery.imported.isEmpty())
+        assertFalse(gallery.ready)
     }
-    @Test fun aPhotoReadForAReplacedListingIsIgnored() {
+    @Test fun aCatalogForAReplacedListingIsIgnored() {
         val gallery = GalleryState()
         val stale = gallery.imageSession
         gallery.reset()
-        assertFalse(gallery.add(stale, photo(1), verified = true))
+        assertFalse(gallery.setCatalog(stale, listOf(photo(1)), setOf(1L)))
         assertTrue(gallery.photos.isEmpty())
         assertTrue(gallery.imported.isEmpty())
+        assertFalse(gallery.ready)
     }
-    @Test fun verifiedPhotosEnterTheImportedSetOnlyWhenAdded() {
+    @Test fun theCatalogReplacesEverythingAndMarksTheGalleryReady() {
         val gallery = GalleryState()
-        gallery.add(gallery.imageSession, photo(1), verified = true)
-        gallery.add(gallery.imageSession, photo(2), verified = false)
-        assertEquals(listOf(1L, 2L), gallery.photos.map { it.handle })
+        assertFalse(gallery.ready)
+        assertTrue(gallery.setCatalog(gallery.imageSession, listOf(photo(1), photo(2)), setOf(2L)))
+        assertTrue(gallery.setCatalog(gallery.imageSession, listOf(photo(3)), emptySet()))
+        assertEquals(listOf(3L), gallery.photos.map { it.handle })
+        assertTrue(gallery.imported.isEmpty())
+        assertTrue(gallery.ready)
+    }
+    @Test fun verifiedPhotosAreTheImportedSet() {
+        val gallery = GalleryState()
+        gallery.setCatalog(gallery.imageSession, listOf(photo(1), photo(2)), setOf(1L))
         assertEquals(setOf(1L), gallery.imported)
-    }
-    @Test fun browsingStartsAtTheFirstHandleAndEndsAfterTheLast() {
-        val gallery = GalleryState()
-        gallery.startBrowse(listOf(9L, 8L))
-        assertTrue(gallery.hasMore)
-        gallery.advance(); gallery.advance()
-        assertFalse(gallery.hasMore)
-        gallery.startBrowse(listOf(7L))
-        assertEquals(0, gallery.cursor)
-        assertTrue(gallery.hasMore)
-    }
-    @Test fun automaticPageReadsAreAdmittedOncePerCursorButManualOnesAlways() {
-        val gallery = GalleryState()
-        gallery.startBrowse(listOf(1L, 2L, 3L))
-        assertTrue(gallery.admitPage(busy = false, connected = true, automatic = true))
-        assertFalse(gallery.admitPage(busy = false, connected = true, automatic = true))
-        assertTrue(gallery.admitPage(busy = false, connected = true, automatic = false))
-        gallery.beginBrowseGesture()
-        assertTrue(gallery.admitPage(busy = false, connected = true, automatic = true))
-    }
-    @Test fun pageReadsAreRefusedWhenBusyDisconnectedOrFinished() {
-        val gallery = GalleryState()
-        gallery.startBrowse(listOf(1L))
-        assertFalse(gallery.admitPage(busy = true, connected = true, automatic = false))
-        assertFalse(gallery.admitPage(busy = false, connected = false, automatic = false))
-        gallery.advance()
-        assertFalse(gallery.admitPage(busy = false, connected = true, automatic = false))
     }
     @Test fun refreshingEvidenceOnlyTouchesTheCheckedHandles() {
         val gallery = GalleryState()

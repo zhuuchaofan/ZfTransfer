@@ -24,8 +24,6 @@ class PhotoPreviewController(
     private val busy get() = runtime.busy
     private val client get() = runtime.client
     private val imageSession get() = runtime.gallery.imageSession
-    private val handles get() = runtime.gallery.handles
-    private val cursor get() = runtime.gallery.cursor
     private val originalPreviews get() = images.originals
     var index = 0
         private set
@@ -138,9 +136,6 @@ class PhotoPreviewController(
         previewQuality = dialog.quality; previewSize = dialog.size; previewHigh = dialog.high
         previewPrevious = dialog.previous; previewNext = dialog.next
         previewImport = dialog.import; previewSelect = dialog.select; previewCounter = dialog.counter
-        previewStrip.canReadMore = { !busy.get() && client != null && cursor < handles.size }
-        previewStrip.onReadMore = { runtime.readPage(automatic = true) }
-        previewStrip.onBrowseGesture = runtime.gallery::beginBrowseGesture
         renderPreview()
         dialog.show()
         refreshActions()

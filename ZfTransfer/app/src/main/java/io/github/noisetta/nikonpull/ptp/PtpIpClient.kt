@@ -108,6 +108,36 @@ class PtpIpClient(
         }
     }
 
+    /**
+     * Every object's basic properties with one request per property instead of one request per object:
+     * about 0.4 s for 1000 objects on a Zf, against about 7 s with GetObjectInfo. The Zf does not
+     * advertise GetObjectPropList but answers it. Callers fall back to [getObjectInfo] when this throws.
+     */
+    fun listObjectsByProperties(): List<CameraObject> {
+        val formats = objectProperty(PROP_OBJECT_FORMAT)
+        if (formats.isEmpty()) return emptyList()
+        val storages = objectProperty(PROP_STORAGE_ID)
+        val sizes = objectProperty(PROP_OBJECT_SIZE)
+        val names = objectProperty(PROP_FILENAME)
+        val dates = objectProperty(PROP_DATE_CREATED)
+        return formats.keys.map { handle ->
+            CameraObject(
+                handle = handle,
+                storageId = storages[handle]?.number ?: 0L,
+                format = formats.getValue(handle).number.toInt(),
+                size = sizes[handle]?.number ?: 0L,
+                thumbnailSize = 0L,
+                filename = names[handle]?.text.orEmpty().ifBlank { "DSC_${handle.toString(16)}.JPG" },
+                captureDate = dates[handle]?.text.orEmpty(),
+            )
+        }
+    }
+
+    private fun objectProperty(property: Int): Map<Long, PtpDataParser.ObjectPropValue> =
+        PtpDataParser.parseObjectPropList(
+            executeForBytes(OP_GET_OBJECT_PROP_LIST, listOf(ALL_OBJECTS, FORMAT_UNDEFINED, property.toLong(), 0L, 0L)),
+        ).associateBy { it.handle }
+
     fun listObjectHandles(): List<Long> {
         if (zfMode) {
             // Zf smart-device mode: GetStorageIDs may be rejected; parent=0 enumerates all.
@@ -607,6 +637,13 @@ class PtpIpClient(
         private const val OP_GET_OBJECT = 0x1009
         private const val OP_GET_THUMB = 0x100A
         private const val OP_GET_PARTIAL_OBJECT = 0x101B
+        private const val OP_GET_OBJECT_PROP_LIST = 0x9805
+        private const val ALL_OBJECTS = 0xffffffffL
+        private const val PROP_STORAGE_ID = 0xDC01
+        private const val PROP_OBJECT_FORMAT = 0xDC02
+        private const val PROP_OBJECT_SIZE = 0xDC04
+        private const val PROP_FILENAME = 0xDC07
+        private const val PROP_DATE_CREATED = 0xDC08
 
         private const val CONNECT_TIMEOUT_MS = 8_000
         private const val COMMAND_TIMEOUT_MS = 60_000

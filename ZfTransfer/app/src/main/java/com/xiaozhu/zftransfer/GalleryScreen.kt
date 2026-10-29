@@ -12,7 +12,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     interface Actions {
         fun settings(); fun cameraStatus(); fun connect(); fun selectAll(); fun cancelSelection()
         fun preview(handle: Long); fun toggle(index: Int); fun rangeStart(index: Int); fun rangeMove(index: Int)
-        fun wifiProfile(); fun wifiSettings(); fun readMore(); fun importSelected(); fun retry()
+        fun wifiProfile(); fun wifiSettings(); fun importSelected(); fun retry()
         fun format(); fun filter(filter: PhotoFilter)
     }
     private fun dp(n: Int) = AppUi.dp(context,n)
@@ -54,14 +54,12 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val count = text("",13f,AppUi.muted)
     val selectionLabel = text("长按滑动多选",13f,AppUi.muted)
     val download = AppUi.button(context,"导入原图",true) { actions.importSelected() }
-    val more = AppUi.button(context,"继续读取照片") { actions.readMore() }.apply { visibility=View.GONE }
     val retryTransfer = AppUi.button(context,"继续导入未完成照片") { actions.retry() }.apply { visibility=View.GONE }
     val footer = LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; visibility=View.GONE }
     val emptyTitle = text("把照片，带回手机",21f).apply { gravity=Gravity.CENTER }
     val emptyHint = text("连接相机 Wi-Fi 后，将自动识别",14f,AppUi.muted).apply { gravity=Gravity.CENTER }
     val connect = AppUi.button(context,"连接相机",true) { actions.connect() }
     val connectionActions = LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
-    val emptyReadMore = AppUi.button(context,"继续读取照片",true) { actions.readMore() }.apply { visibility=View.GONE }
     private val filters = linkedMapOf<PhotoFilter, Pair<TextView,View>>()
     init {
         root.onPage={ direction -> switchFilter(PhotoFilter.entries[SwipeNavigation.adjacent(activeFilter.ordinal,PhotoFilter.entries.size,direction)]) }
@@ -112,7 +110,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
             numColumns=3;horizontalSpacing=dp(3);verticalSpacing=dp(3);stretchMode=GridView.STRETCH_COLUMN_WIDTH
             this.adapter=adapter; setOnItemClickListener { _,_,_,handle -> actions.preview(handle) }
             onToggle={ actions.toggle(it) }
-            onRangeStart={ actions.rangeStart(it) };onRangeMove={ actions.rangeMove(it) };onReadMore={ actions.readMore() }
+            onRangeStart={ actions.rangeStart(it) };onRangeMove={ actions.rangeMove(it) }
         }
         root.addView(localAccess,LinearLayout.LayoutParams(-1,dp(46)))
         gallery=FrameLayout(context).apply { clipToPadding=true }
@@ -123,7 +121,6 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
             connectionActions.addView(action("在应用内连接 Wi-Fi") { actions.wifiProfile() },LinearLayout.LayoutParams(-1,dp(48)))
             connectionActions.addView(action("打开 Wi-Fi 设置") { actions.wifiSettings() },LinearLayout.LayoutParams(-1,dp(48)))
             addView(connectionActions,LinearLayout.LayoutParams(-1,-2))
-            addView(emptyReadMore,LinearLayout.LayoutParams(-1,dp(50)))
         }
         gallery.addView(grid,FrameLayout.LayoutParams(-1,-1));gallery.addView(empty,FrameLayout.LayoutParams(-1,-1));grid.emptyView=empty
         root.addView(gallery,LinearLayout.LayoutParams(-1,0,1f))

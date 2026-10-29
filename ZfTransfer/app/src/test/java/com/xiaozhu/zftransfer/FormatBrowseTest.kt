@@ -29,20 +29,15 @@ class FormatBrowseTest {
         assertEquals(listOf(video), PhotoCatalog.visible(all, emptySet(), PhotoFilter.ALL, MediaFormat.VIDEO))
         assertEquals(listOf(hif), PhotoCatalog.visible(all, emptySet(), PhotoFilter.ALL, MediaFormat.HEIF))
     }
+    @Test fun summaryNamesOnlyJpegsWhenThatIsAllThereIs() {
+        assertEquals("相机共 2 张 JPEG", CameraCatalogSummary.of(listOf(jpeg, jpeg)))
+        assertEquals("相机共 0 张 JPEG", CameraCatalogSummary.of(emptyList()))
+    }
+    @Test fun summaryBreaksDownMixedFormatsAndSkipsEmptyOnes() {
+        assertEquals("相机共 4 个：JPEG 2 · RAW 1 · 视频 1", CameraCatalogSummary.of(listOf(jpeg, jpeg, raw, video)))
+    }
     @Test fun previewListsNeverContainFilesThatCannotBePreviewed() {
         val appended = PhotoCatalog.appendPreview(emptyList(), listOf(jpeg, raw, video), emptySet(), PhotoFilter.ALL, MediaFormat.ALL)
         assertEquals(listOf(jpeg), appended)
-    }
-    @Test fun summaryKeepsTheJpegWordingWhenOnlyJpegsWereRead() {
-        assertEquals("相机共 500 个文件 · 已读取 1 张 JPEG", CameraCatalogSummary.of(500, 40, listOf(jpeg)))
-        assertEquals("相机共 1 张 JPEG", CameraCatalogSummary.of(1, 1, listOf(jpeg)))
-    }
-    @Test fun summaryBreaksDownMixedFormatsAndSkipsEmptyOnes() {
-        val read = listOf(jpeg, jpeg, raw, video)
-        assertEquals("相机共 992 个文件 · 已读取 4 个：JPEG 2 · RAW 1 · 视频 1", CameraCatalogSummary.of(992, 4, read))
-        assertEquals("相机共 4 个：JPEG 2 · RAW 1 · 视频 1", CameraCatalogSummary.of(4, 4, read))
-    }
-    @Test fun summaryForAnEmptyCameraStaysTheJpegWording() {
-        assertEquals("相机共 0 张 JPEG", CameraCatalogSummary.of(0, 0, emptyList()))
     }
 }

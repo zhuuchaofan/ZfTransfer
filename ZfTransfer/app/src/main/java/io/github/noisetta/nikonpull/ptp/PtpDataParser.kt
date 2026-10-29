@@ -32,6 +32,30 @@ internal object PtpDataParser {
         )
     }
 
+    /** One property of one object, from a GetObjectPropList response. */
+    data class ObjectPropValue(val handle: Long, val property: Int, val number: Long, val text: String?)
+
+    /** MTP ObjectPropList: a count, then handle, property code, data type and a value per element. */
+    fun parseObjectPropList(data: ByteArray): List<ObjectPropValue> {
+        val reader = LittleEndianReader(data)
+        val count = reader.u32()
+        if (count > MAX_ARRAY_ITEMS || count * MIN_PROP_ELEMENT_BYTES > reader.remaining()) {
+            throw PtpException("Camera returned an invalid PTP property list")
+        }
+        return List(count.toInt()) {
+            val handle = reader.u32()
+            val property = reader.u16()
+            when (val type = reader.u16()) {
+                TYPE_INT8, TYPE_UINT8 -> ObjectPropValue(handle, property, reader.u8().toLong(), null)
+                TYPE_INT16, TYPE_UINT16 -> ObjectPropValue(handle, property, reader.u16().toLong(), null)
+                TYPE_INT32, TYPE_UINT32 -> ObjectPropValue(handle, property, reader.u32(), null)
+                TYPE_INT64, TYPE_UINT64 -> ObjectPropValue(handle, property, reader.u64(), null)
+                TYPE_STRING -> ObjectPropValue(handle, property, 0, reader.ptpString())
+                else -> throw PtpException("Camera returned a property of unsupported type 0x${type.toString(16)}")
+            }
+        }
+    }
+
     fun parseU32Array(data: ByteArray): List<Long> {
         val reader = LittleEndianReader(data)
         val count = reader.u32()
@@ -73,6 +97,16 @@ internal object PtpDataParser {
     }
 
     private const val MAX_ARRAY_ITEMS = 100_000L
+    private const val MIN_PROP_ELEMENT_BYTES = 9L // handle + property + type + at least one value byte
+    private const val TYPE_INT8 = 0x0001
+    private const val TYPE_UINT8 = 0x0002
+    private const val TYPE_INT16 = 0x0003
+    private const val TYPE_UINT16 = 0x0004
+    private const val TYPE_INT32 = 0x0005
+    private const val TYPE_UINT32 = 0x0006
+    private const val TYPE_INT64 = 0x0007
+    private const val TYPE_UINT64 = 0x0008
+    private const val TYPE_STRING = 0xFFFF
 
     private fun LittleEndianReader.u16Array(): List<Int> {
         val count = u32()

@@ -5,7 +5,7 @@ import java.util.UUID
 
 /**
  * Photos read from the camera in this connection plus which of them are verified imports.
- * Mutated on the main thread only; [imageSession] and [cursor] are also read by the worker.
+ * Mutated on the main thread only; [imageSession] is also read by the worker.
  */
 class GalleryState {
     private val items = mutableListOf<CameraObject>()
@@ -13,33 +13,25 @@ class GalleryState {
     private val importedHandles = mutableSetOf<Long>()
     val imported: Set<Long> get() = importedHandles
     val completions = ImportCompletions()
-    private val pageReads = PageReadGate()
 
     /** Changes on every new connection so late results for an older listing are dropped. */
     @Volatile var imageSession = UUID.randomUUID().toString()
         private set
-    var handles = emptyList<Long>()
+    /** False from a new connection until its catalog has arrived. */
+    var ready = false
         private set
-    @Volatile var cursor = 0
-        private set
-    val hasMore get() = cursor < handles.size
 
     fun reset() {
         imageSession = UUID.randomUUID().toString()
-        items.clear(); importedHandles.clear(); completions.beginBatch()
+        items.clear(); importedHandles.clear(); completions.beginBatch(); ready = false
     }
-    fun startBrowse(listing: List<Long>) { handles = listing; cursor = 0 }
-    fun advance() { cursor++ }
 
-    fun beginBrowseGesture() = pageReads.resetGesture()
-    fun admitPage(busy: Boolean, connected: Boolean, automatic: Boolean) =
-        pageReads.request(imageSession, cursor, handles.size, busy, connected, automatic)
-
-    /** Ignores a photo read for a listing that was replaced in the meantime. */
-    fun add(session: String, obj: CameraObject, verified: Boolean): Boolean {
+    /** Replaces the photo list with the camera's whole catalog; ignored for a listing that was replaced meanwhile. */
+    fun setCatalog(session: String, catalog: List<CameraObject>, verified: Set<Long>): Boolean {
         if (session != imageSession) return false
-        items.add(obj)
-        if (verified) importedHandles.add(obj.handle)
+        items.clear(); items.addAll(catalog)
+        importedHandles.clear(); importedHandles.addAll(verified)
+        ready = true
         return true
     }
     fun markImported(handle: Long, verified: Boolean) {

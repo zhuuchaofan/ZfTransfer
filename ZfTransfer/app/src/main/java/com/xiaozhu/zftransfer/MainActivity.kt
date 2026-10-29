@@ -88,15 +88,12 @@ class MainActivity : Activity() {
         }
     }
     private val connect get() = screen.connect
-    private val more get() = screen.more
     private val retryTransfer get() = screen.retryTransfer
     private val download get() = screen.download
     private val transfers get() = runtime.transfers
     private val progress get() = screen.progress
     private val selected = linkedMapOf<Long, CameraObject>()
 
-    private val handles get() = runtime.gallery.handles
-    private val cursor get() = runtime.gallery.cursor
     private val imports get() = runtime.imports
     private val cameraIdentity get() = runtime.cameraIdentity
     private var completionCursor = 0L
@@ -191,7 +188,7 @@ class MainActivity : Activity() {
             override fun format() = showFormatFilter()
             override fun filter(filter: PhotoFilter) {
                 if(activeFilter==filter) return
-                activeFilter=filter; range=null; grid.endBrowseGesture()
+                activeFilter=filter; range=null
                 grid.adapter=if(filter==PhotoFilter.IMPORTED) localGallery.adapter else adapter
                 refreshCatalog(); updateSelection(); setBusy(busy.get()); grid.setSelection(0)
                 if(filter==PhotoFilter.IMPORTED) localGallery.reload()
@@ -199,7 +196,6 @@ class MainActivity : Activity() {
 
             override fun wifiProfile() = showWifiProfile()
             override fun wifiSettings() { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            override fun readMore() = runtime.readPage()
             override fun importSelected() = requestImport(selected.values.toList())
             override fun retry() {
                 if (!transfers.queue.canRetry(cameraIdentity)) showNotice("请连接原来的相机", "未完成任务属于原相机，请连接原相机后再重试。")
@@ -209,8 +205,7 @@ class MainActivity : Activity() {
         screen.localAccess.setOnClickListener {
             requestPermissions(arrayOf(if(android.os.Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_IMAGES" else "android.permission.READ_EXTERNAL_STORAGE"),43)
         }
-        grid.onReadMore = { if(activeFilter!=PhotoFilter.IMPORTED) runtime.readPage(automatic = true) }
-        grid.onBrowseGesture = runtime.gallery::beginBrowseGesture
+        grid.onVisibleRange = { first, visible -> focusThumbnails(first, visible) }
         setContentView(screen.root)
         updateRetryControl()
         runtime.attach(runtimeListener)
@@ -227,7 +222,7 @@ class MainActivity : Activity() {
             sheet.row((if(activeFormat==format) "✓  " else "") + format.label) {
                 sheet.dismiss()
                 if(activeFormat!=format) {
-                    activeFormat=format;range=null;grid.endBrowseGesture()
+                    activeFormat=format;range=null
                     localGallery.setFormat(format)
                     refreshCatalog();updateSelection();setBusy(busy.get());grid.setSelection(0)
                 }
@@ -330,6 +325,13 @@ class MainActivity : Activity() {
         inRange.forEach { selected[visiblePhotos[it].handle] = visiblePhotos[it] }
         updateSelection()
     }
+    /** Camera thumbnails are read for what is on screen first. */
+    private fun focusThumbnails(first: Int, visible: Int) {
+        if (activeFilter == PhotoFilter.IMPORTED) return
+        val from = (first - visible).coerceAtLeast(0)
+        val to = minOf(gridCells.size, first + visible * 2)
+        runtime.focusThumbnails((from until to).mapNotNull { (gridCells[it] as? GridCell.Photo)?.let { cell -> visiblePhotos[cell.index].handle } })
+    }
     private fun dayHeader(header: GridCell.Header): View {
         val items = DayGroups.photosOf(header, visiblePhotos).filter { it.canImport }
         val width = if (grid.width > 0) grid.width - grid.paddingLeft - grid.paddingRight else resources.displayMetrics.widthPixels - dp(16)
@@ -405,11 +407,9 @@ class MainActivity : Activity() {
     private fun report(message: String) { ui { status.text = message; status.setTextColor(muted); status.visibility = View.VISIBLE } }
     private fun setBusy(value: Boolean) {
         connect.isEnabled = !value
-        setEnabledDimmed(more, !value && client != null && cursor < handles.size)
         setEnabledDimmed(download, !value && client != null && selected.isNotEmpty())
         previewController.refreshActions()
         grid.editable = !value && activeFilter!=PhotoFilter.IMPORTED
-        grid.canReadMore = activeFilter!=PhotoFilter.IMPORTED && !value && client != null && cursor < handles.size
         progress.isIndeterminate = value && runtime.taskState.transfer == null
         progress.visibility = if (value) View.VISIBLE else View.GONE
         screen.renderFilter(activeFilter,if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size,true)
@@ -433,7 +433,7 @@ class MainActivity : Activity() {
         adapter.notifyDataSetChanged()
     }
     private fun hideCameraControls() {
-        listOf(footer, selectAll, cancelSelection, more, screen.connectionActions, screen.emptyReadMore, progress, status)
+        listOf(footer, selectAll, cancelSelection, screen.connectionActions, progress, status)
             .forEach { it.visibility = View.GONE }
     }
     private fun setEnabledDimmed(button: View, enabled: Boolean) { button.isEnabled = enabled; button.alpha = if (enabled) 1f else 0.4f }
@@ -441,8 +441,8 @@ class MainActivity : Activity() {
         if (!::screen.isInitialized) return
         val local=activeFilter==PhotoFilter.IMPORTED
         screen.formatControl.text="格式：${activeFormat.label} ▾"
-        screen.catalogSummary.visibility=if(!local && runtime.connectionReady) View.VISIBLE else View.GONE
-        screen.catalogSummary.text=CameraCatalogSummary.of(handles.size,cursor,photos)
+        screen.catalogSummary.visibility=if(!local && runtime.connectionReady && runtime.gallery.ready) View.VISIBLE else View.GONE
+        screen.catalogSummary.text=CameraCatalogSummary.of(photos)
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
         if(local) {
@@ -451,15 +451,11 @@ class MainActivity : Activity() {
             emptyHint.text="已保存到手机的照片会显示在这里，无需连接相机"
             return
         }
-        val hasMore=client!=null && cursor<handles.size
         val connectionEmpty=photos.isEmpty() && client==null
         footer.visibility=if(photos.isEmpty()) View.GONE else View.VISIBLE
         selectAll.visibility=if(visiblePhotos.none { it.canImport }) View.GONE else View.VISIBLE
         cancelSelection.visibility=if(selectionMode) View.VISIBLE else View.GONE
-        more.visibility=View.GONE
         screen.connectionActions.visibility=if(connectionEmpty) View.VISIBLE else View.GONE
-        screen.emptyReadMore.visibility=if(!connectionEmpty && visiblePhotos.isEmpty() && hasMore) View.VISIBLE else View.GONE
-        screen.emptyReadMore.isEnabled=!busy.get()
         emptyTitle.text=when {
             connectionEmpty -> "把照片，带回手机"
             busy.get() -> "正在读取照片"
@@ -469,7 +465,6 @@ class MainActivity : Activity() {
         }
         emptyHint.text=when {
             connectionEmpty -> "连接相机 Wi-Fi 后，将自动识别"
-            hasMore -> "已读取的照片中暂无匹配，可继续读取更多"
             activeFilter!=PhotoFilter.ALL -> "换个筛选看看"
             else -> "相机中暂未找到可浏览的文件"
         }

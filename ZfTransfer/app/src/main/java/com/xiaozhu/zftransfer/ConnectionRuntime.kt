@@ -3,7 +3,6 @@ package com.xiaozhu.zftransfer
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Network
 import io.github.noisetta.nikonpull.ptp.*
 
@@ -13,8 +12,6 @@ class ConnectionRuntime(private val context: android.content.Context) {
         const val HEARTBEAT_SECONDS = 15L
         const val FOREGROUND_SETTLE_MS = 1800L // Let the system finish joining the camera Wi-Fi before probing.
         const val WIFI_REQUEST_RETRY_MS = 60_000L
-        const val PAGE_SIZE = 40
-        const val GRID_THUMB_EDGE = 1024
         const val THUMB_CACHE_BYTES = 16 * 1024 * 1024
         const val MEDIUM_PREVIEW_CACHE_BYTES = 48L * 1024 * 1024
     }
@@ -214,7 +211,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         task(operation = UserOperation.CONNECT, silentErrors = automatic) {
             val (c, info) = openSession(manual, selectedEndpoint.network)
             announceCamera(c, info)
-            loadPage(c)
+            loadCatalog(c)
         }
     }
     /** Dials the camera and verifies it answers; any stop request along the way aborts with "已停止连接". */
@@ -258,56 +255,48 @@ class ConnectionRuntime(private val context: android.content.Context) {
             log("No stable serial: duplicate skipping disabled")
             presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
         }
-        // Zf may advertise a partial operation table: exercise read operations directly.
-        gallery.startBrowse(c.listObjectHandles().asReversed())
         report("已连接 ${info.displayName}，正在读取照片…")
         lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
-    fun readPage(automatic: Boolean = false) {
-        if (!gallery.admitPage(busy.get(), client != null, automatic)) return
-        task { loadPage(client ?: error("请先连接相机")) }
-    }
-    private fun loadPage(c: PtpIpClient) {
-        val pageSession = gallery.imageSession
-        val end = minOf(gallery.cursor + PAGE_SIZE, gallery.handles.size)
-        while (gallery.cursor < end) {
-            check(client === c) { "已停止读取" }
-            val obj = c.getObjectInfo(gallery.handles[gallery.cursor])
-            gallery.advance()
-            if (MediaFormat.of(obj) != null) {
-                val thumb = try { c.getThumbnail(obj.handle) } catch (e: PtpResponseException) {
-                    // A PTP error has a fully consumed response; transport errors abort the task.
-                    log("Thumbnail unavailable for ${obj.filename}")
-                    null
-                }
-                val bitmap = thumb?.let {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(it, 0, it.size, bounds)
-                    val opts = BitmapFactory.Options().apply {
-                        var sample = 1
-                        while (bounds.outWidth / sample > GRID_THUMB_EDGE || bounds.outHeight / sample > GRID_THUMB_EDGE) sample *= 2
-                        inSampleSize = sample
-                    }
-                    BitmapFactory.decodeByteArray(it, 0, it.size, opts)
-                }
-                if (bitmap != null) runCatching { thumbnailFile(obj.handle).writeBytes(thumb!!) }
-                    .onFailure { log("Thumbnail cache write failed: ${it.javaClass.simpleName}: ${it.message}") }
-                val exists = obj.canImport && savedExists(obj)
-                ui {
-                    if (!gallery.add(pageSession, obj, exists)) return@ui
-                    if (bitmap != null) thumbs.put(obj.handle, bitmap)
-                    revision++; changed()
-                }
-
-            }
-            report("正在读取照片…")
-        }
+    /** The whole camera catalog in one go, sorted newest first across every card; thumbnails follow in the background. */
+    private fun loadCatalog(c: PtpIpClient) {
+        val catalogSession = gallery.imageSession
+        report("正在读取相机文件列表…")
+        val started = now()
+        val listed = readObjects(c)
+        log("Catalog read in ${now() - started} ms")
+        check(client === c) { "已停止读取" }
+        val catalog = CameraCatalog.arrange(listed)
+        val verified = catalog.filter { it.canImport && savedExists(it) }.map { it.handle }.toSet()
+        log("Catalog: ${listed.size} objects, ${catalog.size} photos and videos, ${verified.size} already imported")
         ui {
-            // The photo list is only touched on the main thread.
-            log("Formats read so far: ${MediaFormat.entries.filter { it != MediaFormat.ALL }.joinToString { f -> "${f.label}=${gallery.photos.count { f.matches(it) }}" }}")
-            message = "已加载 ${gallery.photos.size} 个文件${if (gallery.hasMore) " · 向后浏览自动加载更多" else " · 已全部加载"}"; changed()
+            if (!gallery.setCatalog(catalogSession, catalog, verified)) return@ui
+            message = "已读取 ${catalog.size} 个文件"
+            revision++; changed()
+            thumbnailFeeder.start(c, catalog.map { it.handle }, catalogSession)
         }
     }
+    /** One request per property for all objects; the Zf answers it although it does not advertise it. */
+    private fun readObjects(c: PtpIpClient): List<CameraObject> {
+        try {
+            return c.listObjectsByProperties()
+        } catch (e: PtpException) {
+            log("Property list unavailable (${e.message}); reading objects one by one")
+        }
+        val handles = c.listObjectHandles()
+        return handles.mapIndexedNotNull { index, handle ->
+            check(client === c) { "已停止读取" }
+            if (index % 50 == 0) report("正在读取相机文件信息 $index/${handles.size}…")
+            try { c.getObjectInfo(handle) } catch (e: PtpResponseException) { null }
+        }
+    }
+    private val thumbnailFeeder by lazy {
+        ThumbnailFeeder(session, thumbs, ::thumbnailFile, { gallery.imageSession }, { fetched ->
+            if (fetched.isNotEmpty()) ui { fetched.forEach { (handle, bitmap) -> thumbs.put(handle, bitmap) }; revision++; changed() }
+        }, ::log)
+    }
+    /** Handles near the viewport are read first. */
+    fun focusThumbnails(handles: List<Long>) { thumbnailFeeder.focus = handles }
     private val mediumFetcher by lazy {
         MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
             onSessionLost = { if (client == null && !userStopped) lifetime.failed(now()) }, ui = ::ui)

@@ -57,14 +57,10 @@ object SwipeNavigation {
 }
 
 object CameraCatalogSummary {
-    /** Plain JPEG wording when nothing else was read, otherwise a per-format breakdown of what was read. */
-    fun of(totalFiles: Int, readFiles: Int, loaded: List<CameraObject>): String {
+    /** "相机共 N 张 JPEG" when only JPEGs are present, otherwise a per-format breakdown. */
+    fun of(loaded: List<CameraObject>): String {
         val counts = MediaFormat.entries.filter { it!=MediaFormat.ALL }.map { it to loaded.count { obj -> it.matches(obj) } }.filter { it.second>0 }
-        if(counts.all { it.first==MediaFormat.JPEG }) return text(totalFiles,readFiles,loaded.size)
-        val detail=counts.joinToString(" · ") { "${it.first.label} ${it.second}" }
-        return if(readFiles>=totalFiles) "相机共 ${loaded.size} 个：$detail" else "相机共 $totalFiles 个文件 · 已读取 ${loaded.size} 个：$detail"
+        if(counts.all { it.first==MediaFormat.JPEG }) return "相机共 ${loaded.size} 张 JPEG"
+        return "相机共 ${loaded.size} 个：" + counts.joinToString(" · ") { "${it.first.label} ${it.second}" }
     }
-    fun text(totalFiles: Int, readFiles: Int, loadedJpegs: Int): String =
-        if(readFiles >= totalFiles) "相机共 $loadedJpegs 张 JPEG"
-        else "相机共 $totalFiles 个文件 · 已读取 $loadedJpegs 张 JPEG"
 }

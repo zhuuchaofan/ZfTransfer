@@ -8,28 +8,15 @@ import kotlin.math.abs
 
 /** Normal scrolling remains native; only a stationary long press captures a drag. */
 class PhotoGrid(context: Context) : GridView(context) {
-    var canReadMore = false
-    var onReadMore: () -> Unit = {}
-    private var scrolling = false
-    private var browsing = false
-    fun endBrowseGesture() { scrolling = false; browsing = false }
-    var onBrowseGesture: () -> Unit = {}
+    /** Called whenever the visible rows change, so the caller can read what is on screen first. */
+    var onVisibleRange: (first: Int, visible: Int) -> Unit = { _, _ -> }
     init {
         setOnScrollListener(object : android.widget.AbsListView.OnScrollListener {
-            override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {
-                scrolling = state != android.widget.AbsListView.OnScrollListener.SCROLL_STATE_IDLE
-                if (!scrolling) browsing = false
-                if (scrolling) maybeReadMore(firstVisiblePosition, childCount, count)
-            }
+            override fun onScrollStateChanged(view: android.widget.AbsListView, state: Int) {}
             override fun onScroll(view: android.widget.AbsListView, first: Int, visible: Int, total: Int) {
-                maybeReadMore(first, visible, total)
+                if (visible > 0) onVisibleRange(first, visible)
             }
         })
-    }
-    private fun maybeReadMore(first: Int, visible: Int, total: Int) {
-        if (!scrolling || !browsing || dragging || !editable || !canReadMore || total == 0 || visible == 0) return
-        if (first + visible < total - 6) return
-        onReadMore()
     }
     var editable = true
     var onRangeStart: (Int) -> Unit = {}
@@ -80,8 +67,7 @@ class PhotoGrid(context: Context) : GridView(context) {
         lastX = event.x; lastY = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x; downY = event.y; browsing = false
-                onBrowseGesture()
+                downX = event.x; downY = event.y
                 checkTapPosition = INVALID_POSITION
                 checkTapObject = null
                 val hit = pointToPosition(event.x.toInt(),event.y.toInt())
@@ -94,7 +80,6 @@ class PhotoGrid(context: Context) : GridView(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (dragging) { selectAtPointer(); return true }
-                if (event.y - downY < -slop) browsing = true
                 if (abs(event.x - downX) > slop || abs(event.y - downY) > slop) {
                     removeCallbacks(startDrag);checkTapPosition=INVALID_POSITION
                 }

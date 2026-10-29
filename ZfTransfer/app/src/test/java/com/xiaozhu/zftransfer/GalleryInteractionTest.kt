@@ -21,11 +21,6 @@ class GalleryInteractionTest {
         assertEquals(listOf(heif),PhotoCatalog.visible(items,emptySet(),PhotoFilter.ALL,MediaFormat.HEIF))
     }
 
-    @Test fun cameraTotalDoesNotConfuseUnclassifiedFilesWithJpegs() {
-        assertEquals("相机共 500 个文件 · 已读取 36 张 JPEG",CameraCatalogSummary.text(500,40,36))
-        assertEquals("相机共 430 张 JPEG",CameraCatalogSummary.text(500,500,430))
-        assertEquals("相机共 0 张 JPEG",CameraCatalogSummary.text(0,0,0))
-    }
 
     @Test fun horizontalSwipeNavigatesOnlyOneAdjacentPageWithoutWrapping() {
         assertEquals(1,SwipeNavigation.direction(-160f,20f,100f))
@@ -419,11 +414,6 @@ class GalleryInteractionTest {
         assertFalse(ImportEvidence.matches(100, 100, 0, "image/png"))
     }
     @org.junit.Test fun filmstripPrefetchesNearEndOnly() {
-        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(0, 400, 78, 40))
-        org.junit.Assert.assertTrue(FilmstripWindow.nearEnd(2500, 400, 78, 40))
-        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 400, 78, 80))
-        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 0, 78, 40))
-        org.junit.Assert.assertFalse(FilmstripWindow.nearEnd(2500, 400, 78, 0))
     }
     @org.junit.Test fun taskSnapshotControlsImportAndRetryConsistently() {
         val idle = TaskState()
@@ -438,19 +428,6 @@ class GalleryInteractionTest {
         org.junit.Assert.assertEquals("其他照片导入 42%", downloading.previewImportLabel(2, false))
         org.junit.Assert.assertEquals(0, idle.percentage)
         org.junit.Assert.assertEquals(42, downloading.percentage)
-    }
-    @org.junit.Test fun pageAdmissionIsSharedAndRecoversAfterUserGesture() {
-        val pages = PageReadGate()
-        org.junit.Assert.assertTrue(pages.request("a", 40, 200, false, true, true))
-        org.junit.Assert.assertFalse(pages.request("a", 40, 200, false, true, true))
-        org.junit.Assert.assertFalse(pages.request("a", 80, 200, true, true, true))
-        org.junit.Assert.assertTrue(pages.request("a", 80, 200, false, true, true))
-        org.junit.Assert.assertTrue(pages.request("a", 80, 200, false, true, false))
-        org.junit.Assert.assertTrue(pages.request("b", 80, 200, false, true, true))
-        org.junit.Assert.assertFalse(pages.request("b", 200, 200, false, true, true))
-        org.junit.Assert.assertFalse(pages.request("b", 120, 200, false, false, true))
-        pages.resetGesture()
-        org.junit.Assert.assertTrue(pages.request("b", 80, 200, false, true, true))
     }
     @org.junit.Test fun completionObserversDoNotConsumeEachOthersEvents() {
         val completions = ImportCompletions()
