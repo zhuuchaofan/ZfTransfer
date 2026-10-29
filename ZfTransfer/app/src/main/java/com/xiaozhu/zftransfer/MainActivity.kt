@@ -56,7 +56,7 @@ class MainActivity : Activity() {
     }
     private fun refreshCatalog() {
         val next = PhotoCatalog.visible(photos, imported, activeFilter, activeFormat)
-        if (next != visiblePhotos) { visiblePhotos = next; range = null }
+        if (next != visiblePhotos) { visiblePhotos = next; gridCells = DayGroups.plan(next); range = null }
         screen.renderFilter(activeFilter, if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size, true)
     }
     private val localGallery: LocalImportGallery by lazy { LocalImportGallery(this) {
@@ -70,12 +70,22 @@ class MainActivity : Activity() {
     private var issueDialog: Dialog? = null
     private val yellow = 0xfff2c45b.toInt()
     private val muted = 0xffa1a4aa.toInt()
+    private var gridCells = emptyList<GridCell>()
     private val adapter = object : BaseAdapter() {
         override fun hasStableIds() = true
-        override fun getCount() = visiblePhotos.size
-        override fun getItem(position: Int) = visiblePhotos[position]
-        override fun getItemId(position: Int) = visiblePhotos[position].handle
-        override fun getView(position: Int, recycled: View?, parent: ViewGroup): View = photoCell(visiblePhotos[position])
+        override fun getCount() = gridCells.size
+        override fun getItem(position: Int): Any = gridCells[position]
+        override fun getItemId(position: Int): Long = when (val cell = gridCells[position]) {
+            is GridCell.Photo -> visiblePhotos[cell.index].handle
+            is GridCell.Header -> -1L - (cell.day.filter { it.isDigit() }.toLongOrNull() ?: 0L)
+            GridCell.HeaderPad, GridCell.TailPad -> -1_000_000_000L - position
+        }
+        override fun getView(position: Int, recycled: View?, parent: ViewGroup): View = when (val cell = gridCells[position]) {
+            is GridCell.Photo -> photoCell(visiblePhotos[cell.index])
+            is GridCell.Header -> dayHeader(cell)
+            GridCell.HeaderPad -> cells.pad(cells.headerHeight)
+            GridCell.TailPad -> cells.pad(cells.cellHeight(grid.height))
+        }
     }
     private val connect get() = screen.connect
     private val more get() = screen.more
@@ -165,15 +175,19 @@ class MainActivity : Activity() {
                 val index=items.indexOfFirst { it.handle==handle }
                 if(!busy.get() && index>=0) previewController.open(index,items,activeFilter,activeFormat)
             }
-            override fun toggle(index: Int) { visiblePhotos.getOrNull(index)?.let { toggle(it) } }
+            override fun toggle(index: Int) {
+                DayGroups.headerAt(gridCells, index)?.let { toggleDay(it); return }
+                DayGroups.photoIndexAt(gridCells, index)?.let { visiblePhotos.getOrNull(it) }?.let { toggle(it) }
+            }
             override fun rangeStart(index: Int) {
+                val start = DayGroups.photoIndexAt(gridCells, index) ?: return
                 selectionMode = true
                 val visibleHandles = visiblePhotos.map { it.handle }.toSet()
                 rangeOutside = selected.filterKeys { it !in visibleHandles }
-                range = RangeSelection(visiblePhotos.indices.filter { visiblePhotos[it].handle in selected }.toSet(), index)
-                applyRange(index)
+                range = RangeSelection(visiblePhotos.indices.filter { visiblePhotos[it].handle in selected }.toSet(), start)
+                applyRange(start)
             }
-            override fun rangeMove(index: Int) = applyRange(index)
+            override fun rangeMove(index: Int) { DayGroups.photoIndexAt(gridCells, index)?.let { applyRange(it) } }
             override fun format() = showFormatFilter()
             override fun filter(filter: PhotoFilter) {
                 if(activeFilter==filter) return
@@ -314,6 +328,20 @@ class MainActivity : Activity() {
         if (nextHandles == selected.keys) return
         selected.clear(); selected.putAll(rangeOutside)
         inRange.forEach { selected[visiblePhotos[it].handle] = visiblePhotos[it] }
+        updateSelection()
+    }
+    private fun dayHeader(header: GridCell.Header): View {
+        val items = DayGroups.photosOf(header, visiblePhotos).filter { it.canImport }
+        val width = if (grid.width > 0) grid.width - grid.paddingLeft - grid.paddingRight else resources.displayMetrics.widthPixels - dp(16)
+        return cells.header(header.day, header.count, items.isNotEmpty(), items.isNotEmpty() && items.all { it.handle in selected }, width) { toggleDay(header) }
+    }
+    /** Selects every importable photo of the day, or clears them when they are all selected already. */
+    private fun toggleDay(header: GridCell.Header) {
+        if (busy.get()) return
+        val items = DayGroups.photosOf(header, visiblePhotos).filter { it.canImport }
+        if (items.isEmpty()) return
+        selectionMode = true
+        if (items.all { it.handle in selected }) items.forEach { selected.remove(it.handle) } else items.forEach { selected[it.handle] = it }
         updateSelection()
     }
     private fun toggle(obj: CameraObject) {

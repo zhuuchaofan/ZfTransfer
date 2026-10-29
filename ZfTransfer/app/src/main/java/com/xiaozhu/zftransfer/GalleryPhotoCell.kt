@@ -3,6 +3,7 @@ package com.xiaozhu.zftransfer
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
@@ -46,7 +47,26 @@ class GalleryPhotoCell(private val context: Context) {
         cell.layoutParams=AbsListView.LayoutParams(-1,cellHeight(gridHeight))
         return cell
     }
-    private fun cellHeight(gridHeight: Int): Int {
+    /** A day heading, drawn as wide as three columns; the two blank cells behind it keep the row free. */
+    fun header(day: String, count: Int, selectable: Boolean, allSelected: Boolean, width: Int, toggle: () -> Unit): View {
+        val row=LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL;setPadding(dp(4),dp(8),0,dp(2))
+            contentDescription="$day，共 $count 张";isClickable=selectable
+            if(selectable) setOnClickListener { toggle() }
+        }
+        row.addView(AppUi.text(context,day,15f).apply { typeface=Typeface.DEFAULT_BOLD })
+        row.addView(AppUi.text(context,"  ·  $count 张",12f,AppUi.muted))
+        row.addView(View(context),LinearLayout.LayoutParams(0,1,1f))
+        if(selectable) row.addView(ImageView(context).apply {
+            setImageResource(context.resources.getIdentifier(if(allSelected) "ic_selected" else "ic_unselected","drawable",context.packageName))
+            setPadding(dp(10),dp(10),dp(10),dp(10));contentDescription="选择 $day 的照片"
+        },LinearLayout.LayoutParams(dp(44),dp(44)))
+        row.layoutParams=AbsListView.LayoutParams(width,headerHeight)
+        return row
+    }
+    val headerHeight get()=dp(52)
+    fun pad(height: Int): View = View(context).apply { layoutParams=AbsListView.LayoutParams(-1,height) }
+    fun cellHeight(gridHeight: Int): Int {
         val width=((context.resources.displayMetrics.widthPixels-dp(22))/3).coerceAtLeast(dp(68))
         return if(gridHeight>0) minOf(width,((gridHeight-dp(9))/4).coerceAtLeast(dp(68))) else width
     }
