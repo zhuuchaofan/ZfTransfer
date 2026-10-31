@@ -66,6 +66,17 @@ class GalleryStateTest {
         gallery.replaceEvidence(checked = listOf(1L, 2L), verified = setOf(2L))
         assertEquals(setOf(2L, 3L), gallery.imported)
     }
+    @Test fun importedOnOneCardMarksTheCopyOnTheOtherCardToo() {
+        val gallery = GalleryState()
+        val onCardOne = CameraObject(1, 65537, 0x3801, 100, 0, "a.JPG", "20261028T120000")
+        val onCardTwo = CameraObject(2, 131073, 0x3801, 100, 0, "a.JPG", "20261028T120000")
+        val other = CameraObject(3, 65537, 0x3801, 100, 0, "b.JPG", "20261028T120000")
+        gallery.setCatalog(gallery.imageSession, listOf(onCardOne, onCardTwo, other), emptySet())
+        gallery.markImported(1, true)
+        assertEquals(setOf(1L, 2L), gallery.imported)
+        gallery.markImported(2, false)
+        assertTrue(gallery.imported.isEmpty())
+    }
     @Test fun markingImportedCanBeUndone() {
         val gallery = GalleryState()
         gallery.markImported(5, true)

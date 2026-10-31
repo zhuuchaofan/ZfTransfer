@@ -37,8 +37,10 @@ class GalleryState {
         ready = true; version++
         return true
     }
+    /** Imported is a property of the photo, so every copy of it on the other card follows. */
     fun markImported(handle: Long, verified: Boolean) {
-        if (verified) importedHandles.add(handle) else importedHandles.remove(handle)
+        val handles = CopyGroups.copiesOf(items, handle)
+        if (verified) importedHandles.addAll(handles) else importedHandles.removeAll(handles)
     }
     /** Replaces the evidence for [checked] photos, leaving every other handle untouched. */
     fun replaceEvidence(checked: Collection<Long>, verified: Set<Long>) {

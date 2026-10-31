@@ -274,8 +274,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val listed = readObjects(c)
         log("Catalog ${if (first) "read" else "refreshed"} in ${now() - started} ms")
         check(client === c) { "已停止读取" }
-        val catalog = CameraCatalog.arrange(listed) { it.canImport && savedExists(it) }
-        val verified = catalog.filter { it.canImport && savedExists(it) }.map { it.handle }.toSet()
+        val catalog = CameraCatalog.arrange(listed)
+        val verified = CopyGroups.importedWithCopies(catalog) { it.canImport && savedExists(it) }
         log("Catalog: ${listed.size} objects, ${catalog.size} photos and videos, ${verified.size} already imported")
         knownObjects = listed.map { it.handle }.toSet()
         ui {
@@ -353,7 +353,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val identity = cameraIdentity
         val session = gallery.imageSession
         worker.execute {
-            val verified = snapshot.filter { it.canImport && savedExists(it) }.map { it.handle }.toSet()
+            val verified = CopyGroups.importedWithCopies(snapshot) { it.canImport && savedExists(it) }
             ui {
                 if (!busy.get() && identity == cameraIdentity && session == gallery.imageSession) {
                     gallery.replaceEvidence(snapshot.map { it.handle }, verified); revision++; changed()
@@ -363,6 +363,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     fun checkImported(items: List<CameraObject>, ready: (Set<Long>) -> Unit) {
         val session = gallery.imageSession
+        val everything = gallery.photos.toList()
         var duplicates: Set<Long>? = null
         task(operation = UserOperation.IMPORT, onComplete = {
             val checked = duplicates
@@ -371,13 +372,20 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 revision++; changed()
                 ready(checked)
             }
-        }) { duplicates = items.filter { savedExists(it) }.map { it.handle }.toSet() }
+        }) {
+            val imported = CopyGroups.importedWithCopies(everything) { savedExists(it) }
+            duplicates = items.filter { it.handle in imported }.map { it.handle }.toSet()
+        }
     }
     fun startImport(requested: List<CameraObject>, skipExisting: Boolean, retry: Boolean = false) {
-        val items = requested.filter { it.canImport }
-        if (items.isEmpty() || busy.get()) return
+        val importable = requested.filter { it.canImport }
+        // A photo already imported from the other card's copy is skipped too.
+        val items = if (skipExisting) importable.filter { it.handle !in gallery.imported } else importable
+        val skippedEarlier = importable.size - items.size
+        if (importable.isEmpty() || busy.get()) return
         gallery.completions.beginBatch()
         task(operation = UserOperation.IMPORT) {
+            if (items.isEmpty()) { report("已导入 0 张，跳过 $skippedEarlier 张。"); return@task }
             val c = client ?: error("请先连接相机")
             val (done, skipped) = transfers.run(c, items, skipExisting, retry,
                 checkActive = { check(client === c) { "已停止传输" } },
@@ -389,7 +397,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     gallery.markImported(obj.handle, verified)
                     revision++; changed()
                 } })
-            report("已导入 $done 张，跳过 $skipped 张。已保存到手机相册。")
+            report("已导入 $done 张，跳过 ${skipped + skippedEarlier} 张。已保存到手机相册。")
         }
     }
 }

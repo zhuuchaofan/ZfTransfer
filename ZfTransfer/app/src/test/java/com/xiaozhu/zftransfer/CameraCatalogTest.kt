@@ -14,27 +14,6 @@ class CameraCatalogTest {
         val arranged = CameraCatalog.arrange(cardOne + cardTwo)
         assertEquals(listOf("a.JPG", "d.JPG", "b.JPG", "e.JPG", "c.JPG"), arranged.map { it.filename })
     }
-    @Test fun aShotWrittenToBothCardsIsOnePhoto() {
-        val first = obj(10, "a.JPG", "20261029T100000", storage = 65537, size = 500)
-        val second = obj(300, "a.JPG", "20261029T100000", storage = 131073, size = 500)
-        assertEquals(listOf(first), CameraCatalog.arrange(listOf(second, first)))
-    }
-    @Test fun theCopyThatIsAlreadyImportedIsTheOneKept() {
-        val first = obj(10, "a.JPG", "20261029T100000", storage = 65537, size = 500)
-        val second = obj(300, "a.JPG", "20261029T100000", storage = 131073, size = 500)
-        assertEquals(listOf(second), CameraCatalog.arrange(listOf(first, second)) { it.storageId == 131073L })
-    }
-    @Test fun sameNameButDifferentTimeOrSizeAreDifferentPhotos() {
-        val a = obj(1, "a.JPG", "20261029T100000", storage = 1, size = 500)
-        val otherTime = obj(2, "a.JPG", "20261030T100000", storage = 2, size = 500)
-        val otherSize = obj(3, "a.JPG", "20261029T100000", storage = 2, size = 600)
-        assertEquals(3, CameraCatalog.arrange(listOf(a, otherTime, otherSize)).size)
-    }
-    @Test fun twoCopiesOfAVideoAreOneToo() {
-        val v1 = obj(1, "v.MOV", "20261029T100000", storage = 1, format = 0x300D, size = 9_000)
-        val v2 = obj(2, "v.MOV", "20261029T100000", storage = 2, format = 0x300D, size = 9_000)
-        assertEquals(1, CameraCatalog.arrange(listOf(v1, v2)).size)
-    }
     @Test fun foldersAndUnknownObjectsAreDropped() {
         val folder = obj(1, "DCIM", "20260101T000000", format = 0x3001)
         val other = obj(2, "x.bin", "20261029T100000", format = 0x3000)

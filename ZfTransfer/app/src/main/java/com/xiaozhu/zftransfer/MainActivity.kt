@@ -48,6 +48,8 @@ class MainActivity : Activity() {
     private var visiblePhotos = emptyList<CameraObject>()
     private var activeFilter = PhotoFilter.ALL
     private var activeFormat = MediaFormat.ALL
+    /** Storage id of the card being shown, or null for every card. */
+    private var activeCard: Long? = null
     private lateinit var screen: GalleryScreen
     private var rangeOutside = emptyMap<Long, CameraObject>()
     private val sheets = mutableSetOf<AppSheet>()
@@ -55,7 +57,7 @@ class MainActivity : Activity() {
         sheets.add(dialog); dialog.setOnDismissListener { sheets.remove(dialog) }
     }
     private fun refreshCatalog() {
-        val next = PhotoCatalog.visible(photos, imported, activeFilter, activeFormat)
+        val next = PhotoCatalog.visible(photos, imported, activeFilter, activeFormat, activeCard)
         if (next != visiblePhotos) { visiblePhotos = next; gridCells = DayGroups.plan(next); range = null }
         screen.renderFilter(activeFilter, if(activeFilter==PhotoFilter.IMPORTED) localGallery.size else visiblePhotos.size, true)
     }
@@ -135,6 +137,8 @@ class MainActivity : Activity() {
             val catalogChanged = renderedCatalog != runtime.gallery.version
             val anchor = if (catalogChanged) viewportAnchor() else null
             renderedCatalog = runtime.gallery.version
+            // A card that is gone cannot stay selected.
+            if (activeCard != null && activeCard !in StorageCards.slots(photos)) activeCard = null
             if (catalogChanged) {
                 // Files deleted on the camera can no longer be selected.
                 val present = photos.mapTo(HashSet()) { it.handle }
@@ -181,7 +185,7 @@ class MainActivity : Activity() {
                 if(!tapped.canImport) { showNotice("暂不支持预览","${MediaFormat.of(tapped)?.label.orEmpty()} 文件目前只能浏览，预览和导入将在后续版本开放。"); return }
                 val items=visiblePhotos.filter { it.canImport }
                 val index=items.indexOfFirst { it.handle==handle }
-                if(!busy.get() && index>=0) previewController.open(index,items,activeFilter,activeFormat)
+                if(!busy.get() && index>=0) previewController.open(index,items,activeFilter,activeFormat,activeCard)
             }
             override fun toggle(index: Int) {
                 DayGroups.headerAt(gridCells, index)?.let { toggleDay(it); return }
@@ -197,6 +201,7 @@ class MainActivity : Activity() {
             }
             override fun rangeMove(index: Int) { DayGroups.photoIndexAt(gridCells, index)?.let { applyRange(it) } }
             override fun format() = showFormatFilter()
+            override fun card() = showCardFilter()
             override fun filter(filter: PhotoFilter) {
                 if(activeFilter==filter) return
                 activeFilter=filter; range=null
@@ -226,6 +231,22 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = AppUi.dp(this,value)
+    private fun showCardFilter() {
+        val slots = StorageCards.slots(photos)
+        val sheet = newSheet("存储卡筛选")
+        sheet.message("选“全部”时，两张卡上相同的照片只显示一次；选某张卡则只显示那张卡上的文件，可以从指定的卡导入。")
+        (listOf<Long?>(null) + slots).forEach { card ->
+            val count = if (card == null) CopyGroups.unique(photos) { it.handle in imported }.size else photos.count { it.storageId == card }
+            sheet.row((if (activeCard == card) "✓  " else "") + StorageCards.label(slots, card) + " · $count 个") {
+                sheet.dismiss()
+                if (activeCard != card) {
+                    activeCard = card; range = null
+                    refreshCatalog(); updateSelection(); setBusy(busy.get()); grid.setSelection(0)
+                }
+            }
+        }
+        sheet.action("取消"); sheet.show()
+    }
     private fun showFormatFilter() {
         val sheet=newSheet("格式筛选")
         sheet.message("与上方导入状态组合筛选。目前只有 JPEG 可以预览和导入；其他格式可以浏览和筛选，预览与导入后续开放。")
@@ -469,8 +490,11 @@ class MainActivity : Activity() {
         if (!::screen.isInitialized) return
         val local=activeFilter==PhotoFilter.IMPORTED
         screen.formatControl.text="格式：${activeFormat.label} ▾"
+        val slots=StorageCards.slots(photos)
+        screen.cardControl.visibility=if(!local && slots.size>=2) View.VISIBLE else View.GONE
+        screen.cardControl.text="存储卡：${StorageCards.label(slots,activeCard)} ▾"
         screen.catalogSummary.visibility=if(!local && runtime.connectionReady && runtime.gallery.ready) View.VISIBLE else View.GONE
-        screen.catalogSummary.text=CameraCatalogSummary.of(photos)
+        screen.catalogSummary.text=if(activeCard==null) CameraCatalogSummary.of(PhotoCatalog.inCard(photos,imported,null)) else CameraCatalogSummary.of(PhotoCatalog.inCard(photos,imported,activeCard),StorageCards.label(StorageCards.slots(photos),activeCard))
         screen.headingTitle.text=if(local) "手机照片" else "相机照片"
         screen.localAccess.visibility=if(local && !localGallery.hasFullAccess) View.VISIBLE else View.GONE
         if(local) {

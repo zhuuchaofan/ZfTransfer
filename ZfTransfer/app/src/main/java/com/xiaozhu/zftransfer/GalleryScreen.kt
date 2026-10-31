@@ -13,7 +13,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         fun settings(); fun cameraStatus(); fun connect(); fun selectAll(); fun cancelSelection()
         fun preview(handle: Long); fun toggle(index: Int); fun rangeStart(index: Int); fun rangeMove(index: Int)
         fun wifiProfile(); fun wifiSettings(); fun importSelected(); fun retry()
-        fun format(); fun filter(filter: PhotoFilter)
+        fun format(); fun card(); fun filter(filter: PhotoFilter)
     }
     private fun dp(n: Int) = AppUi.dp(context,n)
     private fun text(value: String,size: Float=14f,color: Int=Color.WHITE) = AppUi.text(context,value,size,color)
@@ -51,6 +51,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val headingTitle = text("相机照片",20f).apply { typeface=Typeface.DEFAULT_BOLD }
     val catalogSummary = text("",11f,AppUi.muted).apply { visibility=View.GONE }
     val formatControl=action("格式：全部 ▾") { actions.format() }
+    val cardControl=action("存储卡：全部 ▾") { actions.card() }.apply { visibility=View.GONE }
     val count = text("",13f,AppUi.muted)
     val selectionLabel = text("长按滑动多选",13f,AppUi.muted)
     val download = AppUi.button(context,"导入原图",true) { actions.importSelected() }
@@ -104,6 +105,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         root.addView(LinearLayout(context).apply {
             gravity=Gravity.START
             addView(formatControl,LinearLayout.LayoutParams(-2,dp(36)))
+            addView(cardControl,LinearLayout.LayoutParams(-2,dp(36)).apply { leftMargin=dp(14) })
         })
         root.addView(heading);root.addView(catalogSummary);root.addView(status);root.addView(progress,LinearLayout.LayoutParams(-1,dp(2)))
         grid.apply {

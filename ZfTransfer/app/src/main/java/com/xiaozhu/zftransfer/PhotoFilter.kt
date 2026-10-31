@@ -32,17 +32,21 @@ val CameraObject.canImport get() = MediaFormat.of(this)==MediaFormat.JPEG
 
 /** Only verified imports enter the imported filter; no filename or preview-cache guessing. */
 object PhotoCatalog {
-    fun visible(photos: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> =
-        photos.filter { format.matches(it) && when (filter) {
+    /** [card] null means every card, with copies of one shot shown once; otherwise only that card's files. */
+    fun inCard(photos: List<CameraObject>, verified: Set<Long>, card: Long?): List<CameraObject> =
+        if (card == null) CopyGroups.unique(photos) { it.handle in verified } else photos.filter { it.storageId == card }
+
+    fun visible(photos: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL, card: Long? = null): List<CameraObject> =
+        inCard(photos, verified, card).filter { format.matches(it) && when (filter) {
             PhotoFilter.ALL -> true
             PhotoFilter.NOT_IMPORTED -> it.handle !in verified
             PhotoFilter.IMPORTED -> it.handle in verified
         } }
 
     /** Freeze existing preview membership until dismiss, append only newly eligible photos. */
-    fun appendPreview(existing: List<CameraObject>, loaded: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL): List<CameraObject> {
+    fun appendPreview(existing: List<CameraObject>, loaded: List<CameraObject>, verified: Set<Long>, filter: PhotoFilter, format: MediaFormat = MediaFormat.ALL, card: Long? = null): List<CameraObject> {
         val known = existing.map { it.handle }.toHashSet()
-        return existing + visible(loaded, verified, filter, format).filter { it.canImport && known.add(it.handle) }
+        return existing + visible(loaded, verified, filter, format, card).filter { it.canImport && known.add(it.handle) }
     }
 }
 
@@ -57,10 +61,10 @@ object SwipeNavigation {
 }
 
 object CameraCatalogSummary {
-    /** "相机共 N 张 JPEG" when only JPEGs are present, otherwise a per-format breakdown. */
-    fun of(loaded: List<CameraObject>): String {
+    /** "相机共 N 张 JPEG" when only JPEGs are present, otherwise a per-format breakdown; [scope] names a single card. */
+    fun of(loaded: List<CameraObject>, scope: String = "相机"): String {
         val counts = MediaFormat.entries.filter { it!=MediaFormat.ALL }.map { it to loaded.count { obj -> it.matches(obj) } }.filter { it.second>0 }
-        if(counts.all { it.first==MediaFormat.JPEG }) return "相机共 ${loaded.size} 张 JPEG"
-        return "相机共 ${loaded.size} 个：" + counts.joinToString(" · ") { "${it.first.label} ${it.second}" }
+        if(counts.all { it.first==MediaFormat.JPEG }) return "${scope}共 ${loaded.size} 张 JPEG"
+        return "${scope}共 ${loaded.size} 个：" + counts.joinToString(" · ") { "${it.first.label} ${it.second}" }
     }
 }
