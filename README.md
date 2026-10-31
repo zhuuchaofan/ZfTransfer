@@ -4,7 +4,7 @@
 
 这个项目来自一个很具体的需求：拍完照片后，在手机上清楚地选片、预览，再把需要的原图导入相册，作为 SnapBridge 之外的一个选择。
 
-**[下载 Android 安装包（0.5.12）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.12/ZfTransfer-0.5.12.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.12)
+**[下载 Android 安装包（0.5.13）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.13/ZfTransfer-0.5.13.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.13)
 
 ## 可以做什么
 
