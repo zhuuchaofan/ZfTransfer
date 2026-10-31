@@ -29,6 +29,8 @@ class PtpIpClient(
     private var commandInput: BufferedInputStream? = null
     private var commandOutput: BufferedOutputStream? = null
     private var eventThread: Thread? = null
+    /** Called on the event thread for every event the camera sends. */
+    @Volatile var onEvent: (CameraEvent) -> Unit = {}
     private val eventRunning = AtomicBoolean(false)
     private val nextTransactionId = AtomicLong(0)
     private var responderGuid: String = ""
@@ -407,7 +409,10 @@ class PtpIpClient(
             while (eventRunning.get()) {
                 try {
                     val header = readHeader(eventInput)
-                    skipExactly(eventInput, header.payloadLength)
+                    if (header.type == TYPE_EVENT && header.payloadLength in 6..MAX_SMALL_PACKET_BYTES.toLong()) {
+                        val payload = readPayload(eventInput, header.payloadLength, MAX_SMALL_PACKET_BYTES)
+                        runCatching { onEvent(PtpDataParser.parseEvent(payload)) }
+                    } else skipExactly(eventInput, header.payloadLength)
                     if (header.type == TYPE_PROBE_REQUEST) {
                         synchronized(eventOutput) {
                             eventOutput.write(packet(TYPE_PROBE_RESPONSE, ByteArray(0)))
@@ -623,6 +628,7 @@ class PtpIpClient(
         private const val TYPE_START_DATA = 9
         private const val TYPE_DATA = 10
         private const val TYPE_CANCEL = 11
+        private const val TYPE_EVENT = 8
         private const val TYPE_END_DATA = 12
         private const val TYPE_PROBE_REQUEST = 13
         private const val TYPE_PROBE_RESPONSE = 14

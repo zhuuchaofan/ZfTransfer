@@ -18,12 +18,15 @@ class GalleryState {
     @Volatile var imageSession = UUID.randomUUID().toString()
         private set
     /** False from a new connection until its catalog has arrived. */
-    var ready = false
+    @Volatile var ready = false
+        private set
+    /** Counts every catalog that replaced the photo list, so screens can tell when it changed. */
+    var version = 0
         private set
 
     fun reset() {
         imageSession = UUID.randomUUID().toString()
-        items.clear(); importedHandles.clear(); completions.beginBatch(); ready = false
+        items.clear(); importedHandles.clear(); completions.beginBatch(); ready = false; version++
     }
 
     /** Replaces the photo list with the camera's whole catalog; ignored for a listing that was replaced meanwhile. */
@@ -31,7 +34,7 @@ class GalleryState {
         if (session != imageSession) return false
         items.clear(); items.addAll(catalog)
         importedHandles.clear(); importedHandles.addAll(verified)
-        ready = true
+        ready = true; version++
         return true
     }
     fun markImported(handle: Long, verified: Boolean) {

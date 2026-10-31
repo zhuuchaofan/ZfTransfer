@@ -98,6 +98,7 @@ class MainActivity : Activity() {
     private val cameraIdentity get() = runtime.cameraIdentity
     private var completionCursor = 0L
     private var renderedBusy: Boolean? = null
+    private var renderedCatalog = -1
     private var renderedRevision = -1L
     private var renderedSession = ""
     private val upgraded = mutableSetOf<Long>()
@@ -131,8 +132,18 @@ class MainActivity : Activity() {
                 completionCursor = completed.last().sequence
                 if (selected.isEmpty()) selectionMode = false
             }
+            val catalogChanged = renderedCatalog != runtime.gallery.version
+            val anchor = if (catalogChanged) viewportAnchor() else null
+            renderedCatalog = runtime.gallery.version
+            if (catalogChanged) {
+                // Files deleted on the camera can no longer be selected.
+                val present = photos.mapTo(HashSet()) { it.handle }
+                selected.keys.retainAll(present)
+                if (selected.isEmpty()) selectionMode = false
+            }
             refreshCatalog()
             updateSelection()
+            anchor?.let(::restoreViewport)
             previewController.refresh()
             photos.filter { it.handle in imported && upgraded.add(it.handle) }.forEach {
                 images.upgradeGrid(it, imports.key(it), imageSession)
@@ -325,6 +336,22 @@ class MainActivity : Activity() {
         inRange.forEach { selected[visiblePhotos[it].handle] = visiblePhotos[it] }
         updateSelection()
     }
+    /** The photo at the top of the screen and where it sits, so a refreshed list can keep the view in place. */
+    private fun viewportAnchor(): Pair<Long, Int>? {
+        if (activeFilter == PhotoFilter.IMPORTED || gridCells.isEmpty()) return null
+        val first = grid.firstVisiblePosition
+        val top = grid.getChildAt(0)?.top ?: return null
+        if (first == 0 && top >= 0) return null // at the very top, new photos simply appear there
+        for (i in 0 until grid.childCount) {
+            val cell = gridCells.getOrNull(first + i) as? GridCell.Photo ?: continue
+            return visiblePhotos[cell.index].handle to (grid.getChildAt(i)?.top ?: 0)
+        }
+        return null
+    }
+    private fun restoreViewport(anchor: Pair<Long, Int>) {
+        val position = gridCells.indexOfFirst { it is GridCell.Photo && visiblePhotos[it.index].handle == anchor.first }
+        if (position >= 0) grid.setSelectionFromTop(position, anchor.second)
+    }
     /** Camera thumbnails are read for what is on screen first. */
     private fun focusThumbnails(first: Int, visible: Int) {
         if (activeFilter == PhotoFilter.IMPORTED) return
@@ -362,6 +389,7 @@ class MainActivity : Activity() {
         cameraWifi.schedule()
         if (!::screen.isInitialized || busy.get()) return
         runtime.refreshImportEvidence()
+        runtime.checkForNewPhotos()
         if(activeFilter==PhotoFilter.IMPORTED) localGallery.reload()
     }
     override fun onPause() { resumed = false; runtime.foreground = false; super.onPause() }

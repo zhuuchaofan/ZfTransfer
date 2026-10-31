@@ -111,6 +111,9 @@ data class CameraDeviceInfo(
     }
 }
 
+/** An event the camera pushed on the event channel, such as a new object being added. */
+data class CameraEvent(val code: Int, val params: List<Long>)
+
 open class PtpException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** The camera answered with a non-OK response code; the response was fully consumed, so the session stays usable. */

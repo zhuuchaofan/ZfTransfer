@@ -10,6 +10,8 @@ import io.github.noisetta.nikonpull.ptp.*
 class ConnectionRuntime(private val context: android.content.Context) {
     private companion object {
         const val HEARTBEAT_SECONDS = 15L
+        const val NEW_PHOTO_CHECK_SECONDS = 5L
+        const val EVENT_REFRESH_DELAY_MS = 1500L // let the camera finish writing the file before listing it
         const val FOREGROUND_SETTLE_MS = 1800L // Let the system finish joining the camera Wi-Fi before probing.
         const val WIFI_REQUEST_RETRY_MS = 60_000L
         const val THUMB_CACHE_BYTES = 16 * 1024 * 1024
@@ -25,7 +27,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private val pendingConnect = PendingConnect(connectionHandler)
     val connectionPending get() = pendingConnect.active
     private val wifiRetry = WifiProfileRetry(WIFI_REQUEST_RETRY_MS)
-    var foreground = false
+    @Volatile var foreground = false
     var resumedAt = 0L
     @Volatile var userStopped = false
     var profileAttempted by wifiRetry::attempted
@@ -114,6 +116,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 }
             }
         }, HEARTBEAT_SECONDS, HEARTBEAT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        worker.scheduleWithFixedDelay({ pollForNewPhotos() }, NEW_PHOTO_CHECK_SECONDS, NEW_PHOTO_CHECK_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
     }
     private fun maybeAutoConnect() {
         if (cameraWifi.requestedNetwork != null) wifiRetry.networkAvailable()
@@ -226,6 +229,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
         report("正在连接相机…")
         val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
             zfMode = true, log = ::log)
+        c.onEvent = { event -> handleCameraEvent(c, event) }
         client = c
         ensureConnecting(c)
         c.connect()
@@ -260,20 +264,58 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     /** The whole camera catalog in one go, sorted newest first across every card; thumbnails follow in the background. */
     private fun loadCatalog(c: PtpIpClient) {
-        val catalogSession = gallery.imageSession
         report("正在读取相机文件列表…")
+        readAndPublish(c, first = true)
+    }
+    /** Reads the whole catalog and shows it. The first read starts the session; later reads pick up new or deleted files. */
+    private fun readAndPublish(c: PtpIpClient, first: Boolean) {
+        val catalogSession = gallery.imageSession
         val started = now()
         val listed = readObjects(c)
-        log("Catalog read in ${now() - started} ms")
+        log("Catalog ${if (first) "read" else "refreshed"} in ${now() - started} ms")
         check(client === c) { "已停止读取" }
-        val catalog = CameraCatalog.arrange(listed)
+        val catalog = CameraCatalog.arrange(listed) { it.canImport && savedExists(it) }
         val verified = catalog.filter { it.canImport && savedExists(it) }.map { it.handle }.toSet()
         log("Catalog: ${listed.size} objects, ${catalog.size} photos and videos, ${verified.size} already imported")
+        knownObjects = listed.map { it.handle }.toSet()
         ui {
+            val before = gallery.photos.map { it.handle }.toSet()
             if (!gallery.setCatalog(catalogSession, catalog, verified)) return@ui
-            message = "已读取 ${catalog.size} 个文件"
+            val added = catalog.count { it.handle !in before }
+            message = if (first) "已读取 ${catalog.size} 个文件" else if (added > 0) "相机有 $added 张新照片，已更新" else "相机文件已更新"
             revision++; changed()
             thumbnailFeeder.start(c, catalog.map { it.handle }, catalogSession)
+        }
+    }
+
+    /** Every object the camera listed when the catalog was last read. */
+    @Volatile private var knownObjects: Set<Long> = emptySet()
+    private val refreshSoon = Runnable { worker.execute { pollForNewPhotos() } }
+    private fun handleCameraEvent(c: PtpIpClient, event: CameraEvent) {
+        log("Camera event 0x${event.code.toString(16)} params=${event.params}")
+        // A burst of events (several shots in a row) becomes a single refresh.
+        if (client === c && CameraEvents.changesCatalog(event.code)) {
+            connectionHandler.removeCallbacks(refreshSoon)
+            connectionHandler.postDelayed(refreshSoon, EVENT_REFRESH_DELAY_MS)
+        }
+    }
+    /** Called when the screen comes back, so photos taken meanwhile show up at once. */
+    fun checkForNewPhotos() { worker.execute { pollForNewPhotos() } }
+    /**
+     * A cheap listing of the camera's object handles every few seconds while the screen is open and
+     * nothing else is using the camera; a changed list triggers a refresh. This also covers cameras
+     * that send no events. Never throws: an exception would stop the periodic task.
+     */
+    private fun pollForNewPhotos() {
+        try {
+            val c = client ?: return
+            if (userStopped || busy.get() || !foreground || !gallery.ready || !connectionReady) return
+            val listed = try { c.listObjectHandles().toSet() } catch (e: Exception) { return } // a broken link is the heartbeat's job
+            if (listed == knownObjects) return
+            log("Camera objects changed: ${knownObjects.size} -> ${listed.size}")
+            readAndPublish(c, first = false)
+        } catch (e: Throwable) {
+            log("New photo check failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
     /** One request per property for all objects; the Zf answers it although it does not advertise it. */

@@ -56,6 +56,16 @@ internal object PtpDataParser {
         }
     }
 
+    /** PTP/IP event payload: event code, transaction id, then up to three parameters. */
+    fun parseEvent(data: ByteArray): CameraEvent {
+        val reader = LittleEndianReader(data)
+        val code = reader.u16()
+        reader.u32() // TransactionID
+        val params = ArrayList<Long>(3)
+        while (params.size < 3 && reader.remaining() >= 4) params.add(reader.u32())
+        return CameraEvent(code, params)
+    }
+
     fun parseU32Array(data: ByteArray): List<Long> {
         val reader = LittleEndianReader(data)
         val count = reader.u32()
