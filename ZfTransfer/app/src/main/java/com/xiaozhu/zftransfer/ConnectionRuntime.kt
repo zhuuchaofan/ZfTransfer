@@ -277,6 +277,11 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val catalog = CameraCatalog.arrange(listed)
         val verified = CopyGroups.importedWithCopies(catalog) { it.canImport && savedExists(it) }
         log("Catalog: ${listed.size} objects, ${catalog.size} photos and videos, ${verified.size} already imported")
+        val nearMisses = CopyGroups.nearMisses(catalog)
+        if (nearMisses.isNotEmpty()) {
+            log("Same name on two cards but not identical: ${nearMisses.size} files")
+            nearMisses.take(5).forEach { copies -> log("  " + copies.joinToString(" | ") { "${it.filename} card=${it.storageId} handle=${it.handle} size=${it.size} date=${it.captureDate}" }) }
+        }
         knownObjects = listed.map { it.handle }.toSet()
         ui {
             val before = gallery.photos.map { it.handle }.toSet()

@@ -24,6 +24,23 @@ class StorageCardTest {
     @Test fun theCopyThatIsAlreadyImportedIsTheOneKept() {
         assertEquals(listOf(a2), CopyGroups.unique(listOf(a1, a2)) { it.storageId == slot2 })
     }
+    @Test fun theSecondCopyIsWrittenAMomentLaterAndStillIsTheSamePhoto() {
+        val first = obj(1, "ZCF_3901.NEF", "20261031T181228", slot1, size = 9_665_536)
+        val second = obj(2, "ZCF_3901.NEF", "20261031T181229", slot2, size = 9_665_536)
+        assertEquals(listOf(first), CopyGroups.unique(listOf(second, first)))
+        assertEquals(setOf(1L, 2L), CopyGroups.copiesOf(listOf(first, second), 1))
+        assertTrue(CopyGroups.nearMisses(listOf(first, second)).isEmpty())
+    }
+    @Test fun aSecondCopyAcrossAMinuteBoundaryIsStillMerged() {
+        val first = obj(1, "a.JPG", "20261031T181259", slot1)
+        val second = obj(2, "a.JPG", "20261031T181300", slot2)
+        assertEquals(1, CopyGroups.unique(listOf(first, second)).size)
+    }
+    @Test fun timesMoreThanAFewSecondsApartAreDifferentPhotos() {
+        val first = obj(1, "a.JPG", "20261031T181200", slot1)
+        val second = obj(2, "a.JPG", "20261031T181205", slot2)
+        assertEquals(2, CopyGroups.unique(listOf(first, second)).size)
+    }
     @Test fun sameNameButDifferentTimeOrSizeAreDifferentPhotos() {
         val otherTime = obj(2, "a.JPG", "20261030T100000", slot2)
         val otherSize = obj(3, "a.JPG", "20261029T100000", slot2, size = 600)
@@ -47,6 +64,18 @@ class StorageCardTest {
         val y = obj(2, "same.JPG", "date", slot1)
         val z = obj(3, "same.JPG", "date", slot2)
         assertEquals(3, CopyGroups.unique(listOf(x, y, z)).size)
+    }
+    @Test fun aSameNameFileThatDiffersBetweenTheCardsIsReported() {
+        val identical1 = obj(1, "same.JPG", "20261029T100000", slot1)
+        val identical2 = obj(2, "same.JPG", "20261029T100000", slot2)
+        val differs1 = obj(3, "odd.NEF", "20261029T101500", slot1, size = 800)
+        val differs2 = obj(4, "odd.NEF", "20261029T111500", slot2, size = 800)
+        val reported = CopyGroups.nearMisses(listOf(identical1, identical2, differs1, differs2))
+        assertEquals(1, reported.size)
+        assertEquals(setOf(3L, 4L), reported[0].map { it.handle }.toSet())
+    }
+    @Test fun filesOnOneCardOnlyAreNeverReported() {
+        assertTrue(CopyGroups.nearMisses(listOf(obj(1, "a.JPG", "d1", slot1), obj(2, "a.JPG", "d2", slot1))).isEmpty())
     }
     @Test fun importedOnOneCardMeansImportedOnBoth() {
         val imported = CopyGroups.importedWithCopies(listOf(a1, a2, b1, c2)) { it.handle == 10L }

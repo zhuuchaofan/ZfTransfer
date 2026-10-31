@@ -16,25 +16,49 @@ object CameraCatalog {
 }
 
 /**
- * With "backup" recording the camera writes every shot to both cards: same name, size and time on
- * two storages. Those copies are one photo. Only a file that has exactly one copy on each of several
- * cards counts as such; identical-looking files on a single card stay separate photos.
+ * With "backup" recording the camera writes every shot to both cards: same name and size on two
+ * storages, and a "created" time that differs by about a second because the second copy is written a
+ * moment later. Those copies are one photo. Only a file that has exactly one such copy on each of several
+ * cards counts; identical-looking files on a single card stay separate photos.
  */
 object CopyGroups {
-    fun key(obj: CameraObject) = Triple(obj.filename, obj.size, obj.captureDate)
+    /** How far apart the two copies' times may be. Observed on a Zf: one second. */
+    private const val SAME_MOMENT_SECONDS = 2L
+    private val timestamp = Regex("^(\\d{4})(\\d{2})(\\d{2})T(\\d{2})(\\d{2})(\\d{2})")
 
-    private fun isOnePhoto(copies: List<CameraObject>) = copies.size > 1 && copies.groupBy { it.storageId }.values.all { it.size == 1 }
+    /** Copies share a name and a size; their times are compared separately. */
+    fun key(obj: CameraObject) = Pair(obj.filename, obj.size)
+
+    private fun secondsOf(date: String): Long? {
+        val m = timestamp.find(date) ?: return null
+        val (y, mo, d, h, mi, s) = m.destructured
+        return try { java.time.LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt(), s.toInt()).toEpochSecond(java.time.ZoneOffset.UTC) }
+        catch (e: java.time.DateTimeException) { null }
+    }
+
+    private fun sameMoment(copies: List<CameraObject>): Boolean {
+        val seconds = copies.map { secondsOf(it.captureDate) }
+        if (seconds.any { it == null }) return copies.map { it.captureDate }.distinct().size == 1
+        return seconds.maxOf { it!! } - seconds.minOf { it!! } <= SAME_MOMENT_SECONDS
+    }
+
+    private fun isOnePhoto(copies: List<CameraObject>) =
+        copies.size > 1 && copies.groupBy { it.storageId }.values.all { it.size == 1 } && sameMoment(copies)
 
     /**
      * One copy per photo, in the order of [photos]. The copy that is already imported is kept, otherwise
      * the one on the lower-numbered storage.
      */
     fun unique(photos: List<CameraObject>, isImported: (CameraObject) -> Boolean = { false }): List<CameraObject> {
-        val kept = HashMap<Triple<String, Long, String>, Long>()
-        for ((groupKey, copies) in photos.groupBy { key(it) }) {
-            if (isOnePhoto(copies)) kept[groupKey] = (copies.firstOrNull(isImported) ?: copies.minWith(compareBy<CameraObject>({ it.storageId }, { it.handle }))).handle
+        val kept = HashSet<Long>()
+        val merged = HashSet<Long>()
+        for (copies in photos.groupBy { key(it) }.values) {
+            if (isOnePhoto(copies)) {
+                copies.forEach { merged.add(it.handle) }
+                kept.add((copies.firstOrNull(isImported) ?: copies.minWith(compareBy<CameraObject>({ it.storageId }, { it.handle }))).handle)
+            }
         }
-        return photos.filter { obj -> kept[key(obj)].let { it == null || it == obj.handle } }
+        return photos.filter { it.handle !in merged || it.handle in kept }
     }
 
     /** A photo is imported when any of its copies is, so every copy of it is returned. */
@@ -46,6 +70,15 @@ object CopyGroups {
         }
         return handles
     }
+
+    /**
+     * Files with the same name on more than one card that were nevertheless not merged; worth a look in
+     * the log, since a backup copy should be nearly identical.
+     */
+    fun nearMisses(photos: List<CameraObject>): List<List<CameraObject>> =
+        photos.groupBy { it.filename }.values.filter { named ->
+            named.map { it.storageId }.distinct().size > 1 && unique(named).size == named.size
+        }
 
     /** The handles that stand for the same photo as [handle], itself included. */
     fun copiesOf(photos: List<CameraObject>, handle: Long): Set<Long> {
