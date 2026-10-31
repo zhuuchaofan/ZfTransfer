@@ -283,6 +283,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
             nearMisses.take(5).forEach { copies -> log("  " + copies.joinToString(" | ") { "${it.filename} card=${it.storageId} handle=${it.handle} size=${it.size} date=${it.captureDate}" }) }
         }
         knownObjects = listed.map { it.handle }.toSet()
+        if (first) autoImportBaseline = knownObjects
         ui {
             val before = gallery.photos.map { it.handle }.toSet()
             if (!gallery.setCatalog(catalogSession, catalog, verified)) return@ui
@@ -290,11 +291,25 @@ class ConnectionRuntime(private val context: android.content.Context) {
             message = if (first) "已读取 ${catalog.size} 个文件" else if (added > 0) "相机有 $added 张新照片，已更新" else "相机文件已更新"
             revision++; changed()
             thumbnailFeeder.start(c, catalog.map { it.handle }, catalogSession)
+            if (!first) importNewPhotos(catalog)
         }
+    }
+    /** Downloads photos taken since the session began, when the setting is on. Busy or failed ones come back on the next refresh. */
+    private fun importNewPhotos(catalog: List<CameraObject>) {
+        if (!autoImport || busy.get() || userStopped) return
+        val items = AutoImport.pending(catalog, autoImportBaseline) { it.handle in gallery.imported }
+        if (items.isEmpty()) return
+        log("Auto import: ${items.size} new photos")
+        startImport(items, skipExisting = true)
     }
 
     /** Every object the camera listed when the catalog was last read. */
     @Volatile private var knownObjects: Set<Long> = emptySet()
+    /** Handles the camera held when this session's first read finished; later photos are the ones to auto-import. */
+    @Volatile private var autoImportBaseline: Set<Long> = emptySet()
+    var autoImport: Boolean
+        get() = prefs.getBoolean("auto_import", false)
+        set(value) { prefs.edit().putBoolean("auto_import", value).apply() }
     private val refreshSoon = Runnable { worker.execute { pollForNewPhotos() } }
     private fun handleCameraEvent(c: PtpIpClient, event: CameraEvent) {
         log("Camera event 0x${event.code.toString(16)} params=${event.params}")

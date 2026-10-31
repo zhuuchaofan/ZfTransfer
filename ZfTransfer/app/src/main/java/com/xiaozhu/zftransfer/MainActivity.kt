@@ -276,6 +276,18 @@ class MainActivity : Activity() {
             }
         }
         sheet.body.addView(automatic, LinearLayout.LayoutParams(-1,dp(52)))
+        val autoImport = Switch(this).apply {
+            text = "新照片自动导入"; textSize = 15f; setTextColor(Color.WHITE)
+            isChecked = runtime.autoImport
+            buttonTintList = ColorStateList.valueOf(yellow)
+            setOnCheckedChangeListener { _, checked ->
+                runtime.autoImport = checked
+                runtime.report(if (checked) "已开启新照片自动导入" else "已关闭新照片自动导入")
+                if (checked) runtime.checkForNewPhotos()
+            }
+        }
+        sheet.body.addView(autoImport, LinearLayout.LayoutParams(-1,dp(52)))
+        sheet.body.addView(AppUi.text(this,"连接后新拍的 JPEG 会自动保存到手机，只在应用打开时下载；RAW 和视频暂不支持。").apply { textSize = 12f })
         sheet.row("Wi-Fi 设置") { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         sheet.row("后台连接设置") {
             showIssuePanel(UserIssue("保持后台连接", "允许通知，并将应用省电策略设为「无限制」，以便熄屏后保持连接。持续连接会增加手机和相机耗电，实际效果也受相机无线设置影响。", Recovery.APP_SETTINGS), "打开应用设置")
