@@ -4,7 +4,7 @@
 
 这个项目来自一个很具体的需求：拍完照片后，在手机上清楚地选片、预览，再把需要的原图导入相册，作为 SnapBridge 之外的一个选择。
 
-**[下载 Android 安装包（0.5.14）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.14/ZfTransfer-0.5.14.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.14)
+**[下载 Android 安装包（0.5.15）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.15/ZfTransfer-0.5.15.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.15)
 
 ## 可以做什么
 
@@ -20,7 +20,7 @@
 - 当前实测组合：**小米 14 + Nikon Zf**。
 - 这是公开试用版本。其他手机、其他相机及固件组合尚未验证。
 - 当前导入 JPEG，不支持 RAW、视频或相机远程拍摄。
-- 后续计划见 [后续开发计划](后续开发计划.md)。设置里的“新照片自动导入”默认关闭，开启后只在应用打开时下载。
+- 后续计划见 [后续开发计划](后续开发计划.md)。设置里的“新照片自动导入”默认关闭，开启后只在应用打开时下载；断线期间拍的照片重连后补下（一次最多 100 张）。锁屏时要保持连接，需把应用的省电策略设为“无限制”。
 - 大批量长时间传输、故障恢复与相机关闭后的长时连接仍需继续验证。
 
 ## 安装和连接

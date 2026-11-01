@@ -11,6 +11,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private companion object {
         const val HEARTBEAT_SECONDS = 15L
         const val NEW_PHOTO_CHECK_SECONDS = 5L
+        const val AUTO_IMPORT_WAIT_MS = 1000L
         const val EVENT_REFRESH_DELAY_MS = 1500L // let the camera finish writing the file before listing it
         const val FOREGROUND_SETTLE_MS = 1800L // Let the system finish joining the camera Wi-Fi before probing.
         const val WIFI_REQUEST_RETRY_MS = 60_000L
@@ -283,7 +284,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
             nearMisses.take(5).forEach { copies -> log("  " + copies.joinToString(" | ") { "${it.filename} card=${it.storageId} handle=${it.handle} size=${it.size} date=${it.captureDate}" }) }
         }
         knownObjects = listed.map { it.handle }.toSet()
-        if (first) autoImportBaseline = knownObjects
+        if (first && (autoImportBaseline == null || cameraIdentity == null || autoImportBaselineCamera != cameraIdentity)) {
+            autoImportBaseline = AutoImport.baselineOf(catalog); autoImportBaselineCamera = cameraIdentity
+        }
         ui {
             val before = gallery.photos.map { it.handle }.toSet()
             if (!gallery.setCatalog(catalogSession, catalog, verified)) return@ui
@@ -291,22 +294,39 @@ class ConnectionRuntime(private val context: android.content.Context) {
             message = if (first) "已读取 ${catalog.size} 个文件" else if (added > 0) "相机有 $added 张新照片，已更新" else "相机文件已更新"
             revision++; changed()
             thumbnailFeeder.start(c, catalog.map { it.handle }, catalogSession)
-            if (!first) importNewPhotos(catalog)
+            importNewPhotos()
         }
     }
-    /** Downloads photos taken since the session began, when the setting is on. Busy or failed ones come back on the next refresh. */
-    private fun importNewPhotos(catalog: List<CameraObject>) {
-        if (!autoImport || busy.get() || userStopped) return
-        val items = AutoImport.pending(catalog, autoImportBaseline) { it.handle in gallery.imported }
+    private var autoImportWaiting = false
+    private val autoImportAgain = Runnable { autoImportWaiting = false; importNewPhotos() }
+    /**
+     * Downloads photos taken since the app first saw the camera, when the setting is on. Runs on the main thread.
+     * The first read after a reconnection happens inside the connect task, which still counts as busy: wait for
+     * the camera to be free rather than skip. Photos that failed come back on the next refresh.
+     */
+    private fun importNewPhotos() {
+        if (!autoImport || userStopped || client == null) return
+        if (busy.get()) {
+            if (!autoImportWaiting) { autoImportWaiting = true; connectionHandler.postDelayed(autoImportAgain, AUTO_IMPORT_WAIT_MS) }
+            return
+        }
+        val baseline = autoImportBaseline ?: return
+        val items = AutoImport.pending(gallery.photos.toList(), baseline) { it.handle in gallery.imported }
         if (items.isEmpty()) return
+        if (items.size > AutoImport.CATCH_UP_LIMIT) {
+            log("Auto import: ${items.size} new photos exceed the limit")
+            report("相机里有 ${items.size} 张未导入的新照片，超过自动导入上限 ${AutoImport.CATCH_UP_LIMIT} 张，请手动选择导入。")
+            return
+        }
         log("Auto import: ${items.size} new photos")
         startImport(items, skipExisting = true)
     }
 
     /** Every object the camera listed when the catalog was last read. */
     @Volatile private var knownObjects: Set<Long> = emptySet()
-    /** Handles the camera held when this session's first read finished; later photos are the ones to auto-import. */
-    @Volatile private var autoImportBaseline: Set<Long> = emptySet()
+    /** What the camera held when the app first saw it; kept across reconnections while the app runs. */
+    @Volatile private var autoImportBaseline: Set<AutoImport.Key>? = null
+    private var autoImportBaselineCamera: String? = null
     var autoImport: Boolean
         get() = prefs.getBoolean("auto_import", false)
         set(value) { prefs.edit().putBoolean("auto_import", value).apply() }
