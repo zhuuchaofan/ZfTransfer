@@ -203,11 +203,18 @@ class GalleryInteractionTest {
         val runner = TransferRunner(queue) {}; var saves = 0
         for (identity in listOf("other", "camera")) {
             try {
-                runner.run(identity, queue.remaining, true, true, {}, { it.copy(size = 200) }, { false },
+                runner.run(identity, queue.remaining, true, true, {}, { it.copy(captureDate = "20990101T000000") }, { false },
                     { _, _ -> saves++ }, { _, _ -> }); fail("must reject")
             } catch (_: IllegalStateException) { }
         }
         assertEquals(0, saves); assertEquals(listOf(obj), queue.remaining)
+    }
+    @Test fun retryDownloadsTheCamerasCurrentDescriptionOfAPhotoThatWasStillBeingWritten() {
+        val listed = queuedPhoto(1).copy(size = 1000); val queue = TransferQueue().apply { replace("camera", listOf(listed)) }
+        val saved = mutableListOf<Long>()
+        TransferRunner(queue) {}.run("camera", queue.remaining, true, true, {}, { it.copy(size = 4000) }, { false },
+            { _, photo -> saved.add(photo.size) }, { _, _ -> })
+        assertEquals(listOf(4000L), saved); assertTrue(queue.remaining.isEmpty())
     }
     @Test fun cancellationKeepsRemainingTaskAndDoesNotStartPhoto() {
         val obj = queuedPhoto(1); val queue = TransferQueue(); var saves = 0
@@ -224,6 +231,15 @@ class GalleryInteractionTest {
         assertEquals(listOf(a,b), snapshot); assertEquals(listOf(b), queue.remaining)
         assertFalse(queue.canRetry(null))
         assertFalse(queue.matches(b.copy(captureDate = ""), b.copy(captureDate = "")))
+    }
+    @Test fun aQueuedPhotoStillMatchesWhenOnlyTheThumbnailSizeDiffers() {
+        val queued = queuedPhoto(1).copy(thumbnailSize = 0)
+        val queue = TransferQueue()
+        assertTrue(queue.matches(queued, queued.copy(thumbnailSize = 5321)))
+        assertTrue(queue.matches(queued, queued.copy(size = queued.size + 1, thumbnailSize = 5321)))
+        assertFalse(queue.matches(queued, queued.copy(size = 0)))
+        assertFalse(queue.matches(queued, queued.copy(captureDate = queued.captureDate + "x")))
+        assertFalse(queue.matches(queued, queued.copy(handle = queued.handle + 1)))
     }
     @Test fun movingPinchFocusMovesPhotoWithoutChangingScale() {
         val state = PhotoZoomState().apply { fit(1000f, 800f, 4000f, 2000f); scale(2f, 500f, 400f) }

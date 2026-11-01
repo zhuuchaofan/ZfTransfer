@@ -16,10 +16,10 @@ class TransferRunner(private val queue: TransferQueue, private val persist: () -
         var done = 0; var skipped = 0
         for ((index, obj) in items.withIndex()) {
             checkActive()
-            if (retry) check(queue.matches(obj, currentPhoto(obj))) { "相机照片已变化，请重新浏览并选择照片" }
-            if (skipExisting && exists(obj)) skipped++ else { save(index, obj); done++ }
+            val photo = if (retry) currentPhoto(obj).also { check(queue.matches(obj, it)) { "相机照片已变化，请重新浏览并选择照片" } } else obj
+            if (skipExisting && exists(photo)) skipped++ else { save(index, photo); done++ }
             queue.completed(obj); persist()
-            completed(obj, exists(obj))
+            completed(photo, exists(photo))
         }
         return done to skipped
     }
