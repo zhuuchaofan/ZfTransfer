@@ -278,6 +278,13 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val catalog = CameraCatalog.arrange(listed)
         val verified = CopyGroups.importedWithCopies(catalog) { it.canImport && savedExists(it) }
         log("Catalog: ${listed.size} objects, ${catalog.size} photos and videos, ${verified.size} already imported")
+        if (first) {
+            val formats = listed.groupingBy { "0x" + it.format.toString(16) }.eachCount().entries.joinToString(" ") { "${it.key}=${it.value}" }
+            log("Object formats: $formats")
+            val extensions = listed.groupingBy { it.filename.substringAfterLast('.', "").lowercase() }.eachCount().entries.joinToString(" ") { "${it.key}=${it.value}" }
+            log("File extensions: $extensions")
+            listed.filter { MediaFormat.of(it) == null }.take(10).forEach { log("Not shown: ${it.filename} format=0x${it.format.toString(16)} size=${it.size} card=${it.storageId}") }
+        }
         val nearMisses = CopyGroups.nearMisses(catalog)
         if (nearMisses.isNotEmpty()) {
             log("Same name on two cards but not identical: ${nearMisses.size} files")
