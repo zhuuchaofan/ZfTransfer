@@ -132,7 +132,7 @@ iOS 不允许或很难做到的：
 
 ### 新的未决问题
 
-1. iPhone 的型号（Lightning 还是 USB-C）和 iOS 版本。
+1. iPhone 型号和 iOS 版本：iPhone 15 Pro（USB-C），iOS 27（用户 2026-11-04 回答）。
 2. Zf 菜单里“USB 数据连接”之类的选项具体有哪些；第 1 步的导入结果。
 3. 是否接受 iOS 版必须插线导入原图、后台只能提醒。
 
@@ -145,3 +145,11 @@ iOS 不允许或很难做到的：
 - SnapBridge 的 App Store 页面 <https://apple.co/3Oo9Vge>
 - ImageCaptureCore 在 iOS 上的论坛讨论 <https://developer.apple.com/forums/thread/119529>，<https://developer.apple.com/forums/thread/751312>
 - Z8 通过 USB 连接 iPhone 的用户报告 <https://www.zsystemuser.com/nikon-z-system-news-and/2023-newsviews/the-iphone-and-the-z.html>
+
+### 进展（2026-11-04）
+
+用户不在家，先写代码。代码在 `ios/` 目录，说明见 `ios/README.md`。
+
+- `ios/ZfCore`：纯逻辑移植完成，60 个单元测试在 Linux 上用 Swift 6.1 全部通过（Docker 镜像 swift:6.1-noble）。
+- `ios/App`：ImageCaptureCore + SwiftUI 的有线版，包括发现相机、照片网格（按日期分组，格式、导入状态、存储卡筛选）、全屏预览和缩放、批量导入到相册、导入记录、诊断日志。只做了语法检查，没有用 iOS SDK 编译过，要在 Mac 上用 Xcode 编译。
+- 蓝牙部分还没写。
