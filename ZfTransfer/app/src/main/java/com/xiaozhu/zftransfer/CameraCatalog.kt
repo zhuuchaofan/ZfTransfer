@@ -47,7 +47,8 @@ object CopyGroups {
 
     /**
      * One copy per photo, in the order of [photos]. The copy that is already imported is kept, otherwise
-     * the one on the lower-numbered storage.
+     * the one on the lower-numbered storage. When every copy counts as imported, the lower-numbered one is kept
+     * too, so importing a photo never swaps which copy is shown.
      */
     fun unique(photos: List<CameraObject>, isImported: (CameraObject) -> Boolean = { false }): List<CameraObject> {
         val kept = HashSet<Long>()
@@ -55,7 +56,7 @@ object CopyGroups {
         for (copies in photos.groupBy { key(it) }.values) {
             if (isOnePhoto(copies)) {
                 copies.forEach { merged.add(it.handle) }
-                kept.add((copies.firstOrNull(isImported) ?: copies.minWith(compareBy<CameraObject>({ it.storageId }, { it.handle }))).handle)
+                kept.add(copies.filter(isImported).ifEmpty { copies }.minWith(compareBy<CameraObject>({ it.storageId }, { it.handle })).handle)
             }
         }
         return photos.filter { it.handle !in merged || it.handle in kept }

@@ -24,6 +24,10 @@ class StorageCardTest {
     @Test fun theCopyThatIsAlreadyImportedIsTheOneKept() {
         assertEquals(listOf(a2), CopyGroups.unique(listOf(a1, a2)) { it.storageId == slot2 })
     }
+    @Test fun importingAPhotoKeepsTheSameCopyEvenWhenBothCountAsImported() {
+        assertEquals(listOf(a1), CopyGroups.unique(listOf(a2, a1)))
+        assertEquals(listOf(a1), CopyGroups.unique(listOf(a2, a1)) { true })
+    }
     @Test fun theSecondCopyIsWrittenAMomentLaterAndStillIsTheSamePhoto() {
         val first = obj(1, "ZCF_3901.NEF", "20261031T181228", slot1, size = 9_665_536)
         val second = obj(2, "ZCF_3901.NEF", "20261031T181229", slot2, size = 9_665_536)
