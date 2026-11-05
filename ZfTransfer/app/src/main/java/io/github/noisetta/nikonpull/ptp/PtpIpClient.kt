@@ -190,6 +190,13 @@ class PtpIpClient(
         maximumSize = MAX_THUMBNAIL_BYTES,
     )
 
+    /** The first [length] bytes of an object; enough to read the EXIF header of a photo without downloading it. */
+    fun getObjectHead(handle: Long, length: Int = 4096): ByteArray = executeForBytes(
+        operationCode = OP_GET_PARTIAL_OBJECT,
+        parameters = listOf(handle, 0L, length.toLong()),
+        maximumSize = length,
+    )
+
     /** Read-only Nikon medium preview candidates. Actual support depends on camera/mode. */
     fun getNikonPreview(handle: Long, fullHd: Boolean): ByteArray = executeForBytes(
         operationCode = if (fullHd) 0x920f else 0x90c4,

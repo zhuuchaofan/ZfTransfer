@@ -387,7 +387,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
     /** Handles near the viewport are read first. */
     fun focusThumbnails(handles: List<Long>) { thumbnailFeeder.focus = handles }
     private val mediumFetcher by lazy {
-        MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "medium_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
+        // Older builds cached previews without turning them upright; those are dropped rather than shown sideways.
+        java.io.File(cacheDir, "medium_previews").deleteRecursively()
+        MediumPreviewFetcher(OriginalPreviewCache(java.io.File(cacheDir, "upright_previews"), MEDIUM_PREVIEW_CACHE_BYTES), session, ::log,
             onSessionLost = { if (client == null && !userStopped) lifetime.failed(now()) }, ui = ::ui)
     }
     val mediumPreviews get() = mediumFetcher.cache

@@ -23,6 +23,56 @@ object ThumbnailCodec {
         }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
     }
+
+    /** The camera's thumbnails carry no orientation of their own; the photo's header says how it was held. */
+    fun upright(bitmap: Bitmap, tag: Int): Bitmap {
+        val turn = ExifOrientation.degrees(tag); val flip = ExifOrientation.mirrored(tag)
+        if (turn == 0 && !flip) return bitmap
+        val matrix = android.graphics.Matrix().apply { if (flip) postScale(-1f, 1f); postRotate(turn.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    fun encode(bitmap: Bitmap): ByteArray = java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it) }.toByteArray()
+}
+
+/** The EXIF orientation tag (1 to 8) as a clockwise turn in degrees and a horizontal mirror applied before it. */
+object ExifOrientation {
+    /**
+     * Orientation tag (1 to 8) from the start of a JPEG or TIFF/NEF file, or 1 when the header is too short or has none.
+     * Only IFD0 is read, which sits right behind the Exif header.
+     */
+    fun read(head: ByteArray): Int {
+        val capI = 'I'.code.toByte(); val capM = 'M'.code.toByte()
+        var tiff = -1
+        if (head.size >= 12 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte()) {
+            var p = 2
+            while (p + 4 <= head.size && head[p] == 0xFF.toByte()) {
+                val marker = head[p + 1].toInt() and 0xFF
+                val length = ((head[p + 2].toInt() and 0xFF) shl 8) or (head[p + 3].toInt() and 0xFF)
+                if (marker == 0xE1 && p + 10 <= head.size && head[p + 4] == 'E'.code.toByte() && head[p + 5] == 'x'.code.toByte()) { tiff = p + 10; break }
+                if (marker == 0xDA || length < 2) break
+                p += 2 + length
+            }
+        } else if (head.size >= 8 && ((head[0] == capI && head[1] == capI) || (head[0] == capM && head[1] == capM))) tiff = 0
+        if (tiff < 0 || tiff + 8 > head.size) return 1
+        val little = head[tiff] == capI
+        fun u16(at: Int): Int = if (at < 0 || at + 2 > head.size) -1 else if (little) (head[at].toInt() and 0xFF) or ((head[at + 1].toInt() and 0xFF) shl 8) else ((head[at].toInt() and 0xFF) shl 8) or (head[at + 1].toInt() and 0xFF)
+        fun u32(at: Int): Long = if (at + 4 > head.size) -1L else if (little) (u16(at).toLong() and 0xFFFF) or ((u16(at + 2).toLong() and 0xFFFF) shl 16) else ((u16(at).toLong() and 0xFFFF) shl 16) or (u16(at + 2).toLong() and 0xFFFF)
+        val offset = u32(tiff + 4)
+        if (offset < 0 || tiff + offset + 2 > head.size) return 1
+        val ifd = tiff + offset.toInt()
+        val count = u16(ifd)
+        if (count <= 0) return 1
+        for (i in 0 until count) {
+            val entry = ifd + 2 + i * 12
+            if (entry + 12 > head.size) return 1
+            if (u16(entry) == 0x0112) return u16(entry + 8).takeIf { it in 1..8 } ?: 1
+        }
+        return 1
+    }
+
+    fun degrees(tag: Int) = when (tag) { 3, 4 -> 180; 5, 6 -> 90; 7, 8 -> 270; else -> 0 }
+    fun mirrored(tag: Int) = tag == 2 || tag == 4 || tag == 5 || tag == 7
 }
 
 /**
@@ -73,8 +123,12 @@ class ThumbnailFeeder(
                 val bytes = client.getThumbnail(handle)
                 val bitmap = ThumbnailCodec.decode(bytes)
                 if (bitmap == null) unavailable.add(handle) else {
-                    runCatching { fileFor(handle, imageSession).writeBytes(bytes) }.logFailure("Thumbnail cache write failed")
-                    fetched[handle] = bitmap
+                    val tag = try { ExifOrientation.read(client.getObjectHead(handle)) } catch (e: PtpResponseException) { 1 }
+                    val shown = ThumbnailCodec.upright(bitmap, tag)
+                    // The cached copy is what gets reloaded later, so it is stored the right way up.
+                    val stored = if (shown === bitmap) bytes else ThumbnailCodec.encode(shown)
+                    runCatching { fileFor(handle, imageSession).writeBytes(stored) }.logFailure("Thumbnail cache write failed")
+                    fetched[handle] = shown
                 }
             } catch (e: PtpResponseException) {
                 // The camera answered with an error and the exchange is complete: this file has no thumbnail.

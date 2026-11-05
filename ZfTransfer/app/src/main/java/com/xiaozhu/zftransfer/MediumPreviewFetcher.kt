@@ -13,6 +13,18 @@ class MediumPreviewFetcher(
     private val onSessionLost: () -> Unit,
     private val ui: (() -> Unit) -> Unit,
 ) {
+    /**
+     * The camera's preview carries no orientation, the photo's header does. A preview that already says how it is
+     * held is left alone (the decoder turns it); otherwise it is turned here and stored the right way up.
+     */
+    private fun uprightPreview(client: io.github.noisetta.nikonpull.ptp.PtpIpClient, handle: Long, bytes: ByteArray): ByteArray {
+        if (ExifOrientation.read(bytes) > 1) return bytes
+        val tag = try { ExifOrientation.read(client.getObjectHead(handle)) } catch (e: PtpResponseException) { 1 }
+        if (tag <= 1) return bytes
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return bytes
+        return ThumbnailCodec.encode(ThumbnailCodec.upright(bitmap, tag))
+    }
+
     fun request(photo: CameraObject, key: String, current: () -> Boolean, ready: (File?) -> Unit) {
         session.worker.execute {
             if (!current()) return@execute
@@ -30,8 +42,9 @@ class MediumPreviewFetcher(
                         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                         if (MediumPreviewPolicy.usable(bounds.outWidth, bounds.outHeight, bytes.size)) {
-                            result = cache.store(key, bytes.size.toLong()) { it.write(bytes) }
-                            log("Medium preview bytes=${bytes.size} width=${bounds.outWidth} height=${bounds.outHeight}")
+                            val stored = uprightPreview(c, photo.handle, bytes)
+                            result = cache.store(key, stored.size.toLong()) { it.write(stored) }
+                            log("Medium preview bytes=${stored.size} width=${bounds.outWidth} height=${bounds.outHeight}")
                             break
                         }
                     }
