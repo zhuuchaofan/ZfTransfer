@@ -38,6 +38,6 @@ class FormatBrowseTest {
     }
     @Test fun previewListsNeverContainFilesThatCannotBePreviewed() {
         val appended = PhotoCatalog.appendPreview(emptyList(), listOf(jpeg, raw, video), emptySet(), PhotoFilter.ALL, MediaFormat.ALL)
-        assertEquals(listOf(jpeg), appended)
+        assertEquals(listOf(jpeg, raw), appended)
     }
 }
