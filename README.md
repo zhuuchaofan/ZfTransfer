@@ -1,16 +1,16 @@
 # Zf 传图
 
-把尼康 Zf 中的 JPEG 原图，通过相机 Wi-Fi 保存到 Android 手机相册。
+把尼康 Zf 中的 JPEG 和 RAW 原图，通过相机 Wi-Fi 保存到 Android 手机相册。
 
 这个项目来自一个很具体的需求：拍完照片后，在手机上清楚地选片、预览，再把需要的原图导入相册，作为 SnapBridge 之外的一个选择。
 
-**[下载 Android 安装包（0.5.15）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.15/ZfTransfer-0.5.15.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.15)
+**[下载 Android 安装包（0.5.16）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.5.16/ZfTransfer-0.5.16.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.5.16)
 
 ## 可以做什么
 
 - 三列照片浏览，向后滚动自动加载更多；长按滑动选择多张。
 - 默认加载清晰预览，支持双击、双指缩放，按需查看原图。
-- 单张或批量导入 JPEG 原图到手机相册，显示下载进度。
+- 单张或批量导入 JPEG 和 RAW（NEF/NRW/DNG）原图到手机相册，显示下载进度。RAW 预览使用相机内嵌的预览图。
 - 依据导入记录和手机文件显示“已导入”；重复导入可取消、跳过或再次导入。
 - 连接期间使用前台服务；后台连接效果还受手机省电设置和相机无线状态影响。
 
@@ -19,7 +19,7 @@
 - Android 10 及以上。
 - 当前实测组合：**小米 14 + Nikon Zf**。
 - 这是公开试用版本。其他手机、其他相机及固件组合尚未验证。
-- 当前导入 JPEG，不支持 RAW、视频或相机远程拍摄。
+- 当前导入 JPEG 和 RAW；视频和 HIF 只能浏览，不支持相机远程拍摄。自动导入只处理 JPEG。
 - 后续计划见 [后续开发计划](后续开发计划.md)。设置里的“新照片自动导入”默认关闭，开启后只在应用打开时下载；断线期间拍的照片重连后补下（一次最多 100 张）。锁屏时要保持连接，需把应用的省电策略设为“无限制”。
 - 大批量长时间传输、故障恢复与相机关闭后的长时连接仍需继续验证。
 
