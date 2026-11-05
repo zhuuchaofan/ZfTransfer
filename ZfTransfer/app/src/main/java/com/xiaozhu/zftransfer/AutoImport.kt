@@ -24,7 +24,7 @@ object AutoImport {
      * order. Recomputed on every refresh, so a photo that could not be fetched is tried again.
      */
     fun pending(catalog: List<CameraObject>, baseline: Set<Key>, isImported: (CameraObject) -> Boolean): List<CameraObject> =
-        CopyGroups.unique(catalog.filter { it.canImport && keyOf(it) !in baseline }, isImported)
+        CopyGroups.unique(catalog.filter { MediaFormat.of(it)==MediaFormat.JPEG && keyOf(it) !in baseline }, isImported)
             .filter { !isImported(it) }
             .reversed()
 }

@@ -14,7 +14,7 @@ class FormatBrowseTest {
 
     @Test fun onlyJpegCanBeImported() {
         assertTrue(jpeg.canImport)
-        assertFalse(raw.canImport)
+        assertTrue(raw.canImport)
         assertFalse(video.canImport)
         assertFalse(unknown.canImport)
     }

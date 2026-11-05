@@ -249,7 +249,7 @@ class MainActivity : Activity() {
     }
     private fun showFormatFilter() {
         val sheet=newSheet("格式筛选")
-        sheet.message("与上方导入状态组合筛选。目前只有 JPEG 可以预览和导入；其他格式可以浏览和筛选，预览与导入后续开放。")
+        sheet.message("与上方导入状态组合筛选。JPEG 和 RAW 可以预览和导入；视频、HEIF 目前只能浏览和筛选。")
         MediaFormat.entries.forEach { format ->
             sheet.row((if(activeFormat==format) "✓  " else "") + format.label) {
                 sheet.dismiss()
@@ -287,7 +287,7 @@ class MainActivity : Activity() {
             }
         }
         sheet.body.addView(autoImport, LinearLayout.LayoutParams(-1,dp(52)))
-        sheet.body.addView(AppUi.text(this,"连接后新拍的 JPEG 会自动保存到手机，断线期间拍的在重新连接后补下（一次最多 100 张）。只在应用打开时下载，锁屏时需把应用的省电策略设为「无限制」；RAW 和视频暂不支持。").apply { textSize = 12f })
+        sheet.body.addView(AppUi.text(this,"连接后新拍的 JPEG 会自动保存到手机，断线期间拍的在重新连接后补下（一次最多 100 张）。只在应用打开时下载，锁屏时需把应用的省电策略设为「无限制」；自动保存只处理 JPEG；RAW 请手动选择导入，视频暂不支持。").apply { textSize = 12f })
         sheet.row("Wi-Fi 设置") { startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         sheet.row("后台连接设置") {
             showIssuePanel(UserIssue("保持后台连接", "允许通知，并将应用省电策略设为「无限制」，以便熄屏后保持连接。持续连接会增加手机和相机耗电，实际效果也受相机无线设置影响。", Recovery.APP_SETTINGS), "打开应用设置")

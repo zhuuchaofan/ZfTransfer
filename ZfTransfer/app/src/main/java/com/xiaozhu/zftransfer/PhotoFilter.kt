@@ -27,8 +27,9 @@ enum class MediaFormat(val label: String) {
     }
 }
 
-/** Only JPEG can be previewed and imported so far; every other format is browse-only. A suffix wins over the PTP format code. */
-val CameraObject.canImport get() = MediaFormat.of(this)==MediaFormat.JPEG
+/** JPEG and RAW can be previewed and imported; video and HEIF are browse-only. A suffix wins over the PTP format code. */
+val CameraObject.canImport get() = MediaFormat.of(this).let { it==MediaFormat.JPEG || it==MediaFormat.RAW }
+val CameraObject.isRawFile get() = MediaFormat.of(this)==MediaFormat.RAW
 
 /** Only verified imports enter the imported filter; no filename or preview-cache guessing. */
 object PhotoCatalog {

@@ -428,6 +428,7 @@ class GalleryInteractionTest {
         assertFalse(ImportEvidence.matches(0, 0, 0, "image/jpeg"))
         assertFalse(ImportEvidence.matches(100, 100, 0, null))
         assertFalse(ImportEvidence.matches(100, 100, 0, "image/png"))
+        assertTrue(ImportEvidence.matches(100, 100, 0, "image/x-nikon-nef"))
     }
     @org.junit.Test fun filmstripPrefetchesNearEndOnly() {
     }

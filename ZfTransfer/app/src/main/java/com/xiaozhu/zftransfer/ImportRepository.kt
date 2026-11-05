@@ -32,7 +32,8 @@ class ImportRepository(private val resolver: ContentResolver, private val prefs:
         val key = key(obj)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, obj.filename.replace(Regex("[\\\\/\\p{Cntrl}]"), "_"))
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.MIME_TYPE,
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(obj.filename.substringAfterLast('.', "").lowercase()) ?: obj.mimeType)
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ZfTransfer")
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
@@ -61,7 +62,7 @@ class ImportRepository(private val resolver: ContentResolver, private val prefs:
             val record = prefs.edit().putString("import_uri_" + uri.lastPathSegment, uri.toString())
             if (key != null) record.putString(key, uri.toString())
             check(record.commit()) { "无法保存导入记录" }
-            log("Saved original JPEG; bytes=$count")
+            log("Saved original ${obj.filename}; bytes=$count")
         } finally {
             if (!published) resolver.delete(uri, null, null)
         }

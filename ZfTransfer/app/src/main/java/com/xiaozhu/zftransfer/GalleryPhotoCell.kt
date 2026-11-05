@@ -39,6 +39,9 @@ class GalleryPhotoCell(private val context: Context) {
             isSelected=selected;isEnabled=enabled;setOnClickListener { toggle() }
         }
         cell.addView(check,FrameLayout.LayoutParams(dp(44),dp(44),Gravity.TOP or Gravity.RIGHT))
+        if(MediaFormat.of(obj)==MediaFormat.RAW) cell.addView(AppUi.text(context,formatLabel,10f).apply {
+            setPadding(dp(7),dp(2),dp(7),dp(2));background=AppUi.shape(context,0xcc101112.toInt(),8)
+        },FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.RIGHT).apply { rightMargin=dp(6);bottomMargin=dp(6) })
         if(imported) cell.addView(AppUi.text(context,"已导入",10f).apply {
             setPadding(dp(7),dp(2),dp(7),dp(2));background=AppUi.shape(context,0xcc101112.toInt(),8)
         },FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.LEFT).apply { leftMargin=dp(6);bottomMargin=dp(6) })

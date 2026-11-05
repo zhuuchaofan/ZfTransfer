@@ -54,6 +54,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
         if (closed) return
         worker.execute {
             if (closed || runtime.gallery.imageSession != session) return@execute
+            if (obj.isRawFile) return@execute
             val uri = runtime.imports.verifiedUri(obj, recordKey) ?: return@execute
             val bitmap = runCatching { decode(ImageDecoder.createSource(resolver, uri), 512) }
                 .logFailure("Grid upgrade decode failed").getOrNull() ?: return@execute
@@ -77,8 +78,10 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
         val recordKey = runtime.imports.key(obj)
         worker.execute {
             if (closed || !current()) return@execute
-            val uri = runtime.imports.verifiedUri(obj, recordKey)
-            val original = if (uri == null) originals.find(key, obj.size) else null
+            // RAW files cannot be decoded here; they are shown through the camera's embedded preview.
+            val raw = obj.isRawFile
+            val uri = if (raw) null else runtime.imports.verifiedUri(obj, recordKey)
+            val original = if (uri == null && !raw) originals.find(key, obj.size) else null
             val medium = if (uri == null && original == null) runtime.mediumPreviews.findCompleted(key) else null
             val source = when {
                 uri != null -> ImageDecoder.createSource(resolver, uri)
@@ -102,6 +105,7 @@ class GalleryImageLoader(context: Context, private val runtime: ConnectionRuntim
                 if (bitmap != null) ready(Preview(bitmap, uri != null || original != null, when {
                     uri != null -> "本地原图预览 · 双击或双指缩放"
                     original != null -> "原图预览 · 双击或双指缩放"
+                    raw -> "RAW 内嵌预览 · 双击或双指缩放"
                     else -> "清晰预览 · 双击或双指缩放"
                 })) else if (allowFetch) {
                     runtime.requestMediumPreview(obj, key, { !closed && current() && session == runtime.gallery.imageSession }) { result ->

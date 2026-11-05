@@ -62,13 +62,13 @@ class PhotoPreviewController(
             if (result != null) {
                 previewImage.showPhoto(result.bitmap, detailed = true)
                 previewQuality.text = result.quality
-            } else previewQuality.text = "清晰预览暂不可用，可按需查看原图"
+            } else previewQuality.text = if (obj.isRawFile) "RAW 预览暂不可用，仍可导入原片" else "清晰预览暂不可用，可按需查看原图"
             updateOriginalAction()
         }
     }
     private fun updateOriginalAction() {
         previewHigh.text = "原图"
-        previewHigh.visibility = View.VISIBLE
+        previewHigh.visibility = if (photos.getOrNull(index)?.isRawFile == true) View.GONE else View.VISIBLE
         previewHigh.isEnabled = !previewChecking && !previewOriginalAvailable && !busy.get() && client != null
         previewHigh.alpha = if (previewHigh.isEnabled) 1f else 0.4f
         previewHigh.contentDescription = if (previewOriginalAvailable) "当前为原图预览" else "查看原图"
@@ -163,7 +163,7 @@ class PhotoPreviewController(
         previewImage.showPhoto(thumbnail(obj.handle), detailed = false)
         previewImage.contentDescription = obj.filename
         previewName.text = obj.filename + if (obj.handle in imported) " · 已导入" else ""
-        previewSize.text = "JPEG · ${"%.1f".format(obj.size / 1048576.0)} MB"
+        previewSize.text = "${MediaFormat.of(obj)?.label ?: "JPEG"} · ${"%.1f".format(obj.size / 1048576.0)} MB"
         loadDetailedPreview(obj, generation)
         previewSelect.text = if (isSelected(obj.handle)) "移出选择" else "加入选择"
         previewPrevious.isEnabled = index > 0
