@@ -70,8 +70,8 @@ class MainActivity : Activity() {
     private var selectionMode = false
     private var range: RangeSelection? = null
     private var issueDialog: Dialog? = null
-    private val yellow = 0xfff2c45b.toInt()
-    private val muted = 0xffa1a4aa.toInt()
+    private val yellow get() = AppUi.yellow
+    private val muted get() = AppUi.muted
     private var gridCells = emptyList<GridCell>()
     private val adapter = object : BaseAdapter() {
         override fun hasStableIds() = true

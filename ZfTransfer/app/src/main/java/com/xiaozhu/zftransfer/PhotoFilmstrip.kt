@@ -73,7 +73,7 @@ class PhotoFilmstrip(context: Context) : HorizontalScrollView(context) {
                 view
             }
             image.setImageBitmap(thumbnail(photos[position].handle))
-            image.setBackgroundColor(if (position == selected) 0xfff2c45b.toInt() else Color.TRANSPARENT)
+            image.setBackgroundColor(if (position == selected) AppUi.yellow else Color.TRANSPARENT)
             image.isSelected = position == selected
         }
     }

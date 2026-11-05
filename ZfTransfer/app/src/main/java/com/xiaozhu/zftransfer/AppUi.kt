@@ -11,11 +11,50 @@ import android.widget.*
 
 /** Shared native styling for gallery, preview and every app-owned sheet. */
 object AppUi {
-    const val background = 0xff101112.toInt()
-    const val panel = 0xff1b1d1f.toInt()
-    const val yellow = 0xfff2c45b.toInt()
-    const val muted = 0xffa1a4aa.toInt()
-    const val line = 0xff35383c.toInt()
+    // Tonal dark palette. On Android 12+ the accent and surfaces follow the wallpaper (dynamic color);
+    // older systems keep the original amber accent.
+    var background = 0xff101112.toInt(); private set
+    var panel = 0xff1b1d1f.toInt(); private set
+    var panelHigh = 0xff26292c.toInt(); private set
+    var yellow = 0xfff2c45b.toInt(); private set
+    var onAccent = 0xff241a00.toInt(); private set
+    var accentContainer = 0xff4a3b10.toInt(); private set
+    var onAccentContainer = 0xffffe08f.toInt(); private set
+    var muted = 0xffa9acb2.toInt(); private set
+    var line = 0xff35383c.toInt(); private set
+    const val danger = 0xffff847b.toInt()
+    fun init(context: Context) {
+        if (android.os.Build.VERSION.SDK_INT < 31) return
+        runCatching {
+            fun c(id: Int) = context.getColor(id)
+            background = c(android.R.color.system_neutral1_900)
+            panel = c(android.R.color.system_neutral1_800)
+            panelHigh = c(android.R.color.system_neutral2_700)
+            line = c(android.R.color.system_neutral2_700)
+            muted = c(android.R.color.system_neutral2_300)
+            yellow = c(android.R.color.system_accent1_200)
+            onAccent = c(android.R.color.system_accent1_800)
+            accentContainer = c(android.R.color.system_accent1_700)
+            onAccentContainer = c(android.R.color.system_accent1_100)
+        }
+    }
+    /** Round check marker used by photo cells and day headings. */
+    fun applySelectIcon(view: ImageView, selected: Boolean) {
+        val ctx = view.context
+        if (selected) {
+            view.setImageResource(ctx.resources.getIdentifier("ic_check", "drawable", ctx.packageName))
+            view.imageTintList = android.content.res.ColorStateList.valueOf(onAccent)
+            view.background = android.graphics.drawable.InsetDrawable(
+                GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(yellow) }, dp(ctx, 11))
+            view.setPadding(dp(ctx, 15), dp(ctx, 15), dp(ctx, 15), dp(ctx, 15))
+        } else {
+            view.setImageResource(ctx.resources.getIdentifier("ic_unselected", "drawable", ctx.packageName))
+            view.imageTintList = null; view.background = null
+            view.setPadding(dp(ctx, 10), dp(ctx, 10), dp(ctx, 10), dp(ctx, 10))
+        }
+    }
+    fun chip(context: Context, active: Boolean, radius: Int = 18) =
+        shape(context, if (active) accentContainer else Color.TRANSPARENT, radius, if (active) null else line)
     fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()
     fun shape(context: Context, color: Int, radius: Int = 16, stroke: Int? = null) = GradientDrawable().apply {
         setColor(color); cornerRadius = dp(context, radius).toFloat()
@@ -26,18 +65,18 @@ object AppUi {
         setPadding(0, dp(context, 6), 0, dp(context, 6))
     }
     fun button(context: Context, value: String, primary: Boolean = false, action: () -> Unit) = Button(context).apply {
-        text = value; textSize = 15f; isAllCaps = false
-        setTextColor(if (primary) AppUi.background else Color.WHITE)
-        backgroundTintList = null
-        background = shape(context, if (primary) yellow else panel, 16, if (primary) null else line)
-        minHeight = dp(context, 48); minimumHeight = dp(context, 48)
-        setPadding(dp(context, 12), dp(context, 8), dp(context, 12), dp(context, 8))
+        text = value; textSize = 15f; isAllCaps = false; typeface = Typeface.DEFAULT_BOLD
+        setTextColor(if (primary) onAccent else Color.WHITE)
+        backgroundTintList = null; stateListAnimator = null
+        background = shape(context, if (primary) yellow else panelHigh, 26)
+        minHeight = dp(context, 52); minimumHeight = dp(context, 52)
+        setPadding(dp(context, 16), dp(context, 8), dp(context, 12), dp(context, 8))
         setOnClickListener { action() }
     }
     fun input(context: Context, placeholder: String, password: Boolean = false) = EditText(context).apply {
         hint = placeholder; textSize = 15f; setSingleLine(true)
         setTextColor(Color.WHITE); setHintTextColor(muted)
-        background = shape(context, AppUi.background, 10, line)
+        background = shape(context, AppUi.background, 14, line)
         setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 12))
         inputType = InputType.TYPE_CLASS_TEXT or if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
@@ -58,9 +97,9 @@ class AppSheet(activity: Activity, title: String) : Dialog(activity) {
         }.apply { isFillViewport = false; isVerticalScrollBarEnabled = false }
         body.setPadding(dp(22), dp(10), dp(22), dp(20))
         body.background = GradientDrawable().apply {
-            setColor(AppUi.panel); val r = dp(24).toFloat(); cornerRadii = floatArrayOf(r,r,r,r,0f,0f,0f,0f)
+            setColor(AppUi.panel); val r = dp(28).toFloat(); cornerRadii = floatArrayOf(r,r,r,r,0f,0f,0f,0f)
         }
-        body.addView(View(context).apply { background = AppUi.shape(context, 0xff53575c.toInt(), 3) },
+        body.addView(View(context).apply { background = AppUi.shape(context, AppUi.line, 3) },
             LinearLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(16) })
         body.addView(AppUi.text(context, title, 21f).apply { typeface = Typeface.DEFAULT_BOLD },
             LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
@@ -80,7 +119,7 @@ class AppSheet(activity: Activity, title: String) : Dialog(activity) {
             body.addView(it, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(8) })
         }
     fun row(value: String, destructive: Boolean = false, run: () -> Unit) {
-        body.addView(AppUi.text(context, value, 15f, if (destructive) 0xffff847b.toInt() else Color.WHITE).apply {
+        body.addView(AppUi.text(context, value, 15f, if (destructive) AppUi.danger else Color.WHITE).apply {
             gravity = Gravity.CENTER_VERTICAL; minHeight = dp(52)
             val arrow = context.getDrawable(context.resources.getIdentifier("ic_chevron_right","drawable",context.packageName))
             setCompoundDrawablesWithIntrinsicBounds(null,null,arrow,null)
@@ -92,7 +131,7 @@ class AppSheet(activity: Activity, title: String) : Dialog(activity) {
         super.show()
         window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
-            setLayout(-1, -2); setGravity(Gravity.BOTTOM); setDimAmount(.65f)
+            setLayout(-1, -2); setGravity(Gravity.BOTTOM); setDimAmount(.6f)
             navigationBarColor = AppUi.panel
         }
     }
@@ -103,8 +142,8 @@ class ProgressActionButton(context: Context) : Button(context) {
     private var progressInitialized = false
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     init {
-        isAllCaps = false; textSize = 15f; setTextColor(AppUi.background)
-        backgroundTintList = null; minHeight = AppUi.dp(context, 48)
+        isAllCaps = false; textSize = 15f; setTextColor(AppUi.onAccent); typeface = Typeface.DEFAULT_BOLD
+        backgroundTintList = null; stateListAnimator = null; minHeight = AppUi.dp(context, 48)
         setPadding(AppUi.dp(context, 10), 0, AppUi.dp(context, 10), 0)
         setTransferProgress(null)
     }
@@ -113,12 +152,12 @@ class ProgressActionButton(context: Context) : Button(context) {
         if (progressInitialized && next == percentage) return
         percentage = next
         progressInitialized = true
-        background = AppUi.shape(context, if (next == null) AppUi.yellow else 0xffaa8c48.toInt(), 16)
+        background = AppUi.shape(context, if (next == null) AppUi.yellow else AppUi.accentContainer, 26)
         invalidate()
     }
     override fun onDraw(canvas: Canvas) {
         percentage?.let {
-            val saved = canvas.save(); val radius = AppUi.dp(context,16).toFloat()
+            val saved = canvas.save(); val radius = AppUi.dp(context,26).toFloat()
             canvas.clipPath(Path().apply { addRoundRect(RectF(0f,0f,width.toFloat(),height.toFloat()),radius,radius,Path.Direction.CW) })
             paint.color = AppUi.yellow
             canvas.drawRect(0f,0f,width * (it / 100f),height.toFloat(),paint)
