@@ -266,7 +266,7 @@ class MainActivity : Activity() {
         val sheet = newSheet("相机与应用")
         sheet.row("相机 Wi-Fi 配置") { showWifiProfile() }
         val automatic = Switch(this).apply {
-            text = "自动连接"; textSize = 15f; setTextColor(Color.WHITE)
+            text = "自动连接"; textSize = 15f; setTextColor(AppUi.ink)
             isChecked = prefs.getBoolean("auto_connect", true)
             buttonTintList = ColorStateList.valueOf(yellow)
             setOnCheckedChangeListener { _, checked ->
@@ -277,7 +277,7 @@ class MainActivity : Activity() {
         }
         sheet.body.addView(automatic, LinearLayout.LayoutParams(-1,dp(52)))
         val autoImport = Switch(this).apply {
-            text = "新照片自动导入"; textSize = 15f; setTextColor(Color.WHITE)
+            text = "新照片自动导入"; textSize = 15f; setTextColor(AppUi.ink)
             isChecked = runtime.autoImport
             buttonTintList = ColorStateList.valueOf(yellow)
             setOnCheckedChangeListener { _, checked ->
@@ -317,7 +317,7 @@ class MainActivity : Activity() {
         val error = AppUi.text(this,"",12f,AppUi.danger).apply { visibility=View.GONE }
         sheet.body.addView(error)
         val remember = Switch(this).apply {
-            text="加密保存，下次自动连接";textSize=14f;setTextColor(Color.WHITE);isChecked=true
+            text="加密保存，下次自动连接";textSize=14f;setTextColor(AppUi.ink);isChecked=true
             buttonTintList=ColorStateList.valueOf(yellow)
         }
         sheet.body.addView(remember,LinearLayout.LayoutParams(-1,dp(56)))

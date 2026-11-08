@@ -10,7 +10,7 @@ import android.widget.*
 class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, private val onPrevious: () -> Unit,
     private val onNext: () -> Unit, onImport: () -> Unit, onSelect: () -> Unit) : Dialog(activity,android.R.style.Theme_Material_NoActionBar) {
     private fun dp(n:Int)=AppUi.dp(context,n)
-    private fun label(value:String,size:Float=14f,color:Int=Color.WHITE)=AppUi.text(context,value,size,color)
+    private fun label(value:String,size:Float=14f,color:Int=AppUi.ink)=AppUi.text(context,value,size,color)
     private fun arrow(description:String,next:Boolean=false,run:()->Unit)=ImageButton(context).apply {
         setImageResource(context.resources.getIdentifier("ic_back","drawable",context.packageName))
         imageTintList=android.content.res.ColorStateList.valueOf(AppUi.yellow)
@@ -20,10 +20,10 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, private val onP
     }
     val image=ZoomPhotoView(context)
     val strip=PhotoFilmstrip(context)
-    val counter=label("照片预览",15f).apply { gravity=Gravity.CENTER;contentDescription="照片预览" }
+    val counter=label("照片预览",15f).apply { gravity=Gravity.CENTER;contentDescription="照片预览";typeface=AppUi.mono }
     val name=label("",16f)
     val quality=label("清晰预览",11f,AppUi.muted).apply { maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END }
-    val size=label("",12f,AppUi.muted)
+    val size=label("",12f,AppUi.muted).apply { typeface=AppUi.mono }
     val high=label("原图",14f,AppUi.yellow).apply {
         gravity=Gravity.CENTER;minHeight=dp(48);contentDescription="查看原图";setOnClickListener { onHigh() }
     }

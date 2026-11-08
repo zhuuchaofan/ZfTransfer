@@ -16,7 +16,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         fun format(); fun card(); fun filter(filter: PhotoFilter)
     }
     private fun dp(n: Int) = AppUi.dp(context,n)
-    private fun text(value: String,size: Float=14f,color: Int=Color.WHITE) = AppUi.text(context,value,size,color)
+    private fun text(value: String,size: Float=14f,color: Int=AppUi.ink) = AppUi.text(context,value,size,color)
     private fun action(value: String, run: () -> Unit) = text(value,14f,AppUi.yellow).apply {
         gravity=Gravity.CENTER; minWidth=dp(48); minHeight=dp(44); setOnClickListener { run() }
     }
@@ -42,7 +42,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     val status = text("",13f,AppUi.muted).apply {
         maxLines=4; ellipsize=android.text.TextUtils.TruncateAt.END; visibility=View.GONE
         setLineSpacing(dp(2).toFloat(),1f); setPadding(dp(14),dp(10),dp(14),dp(10))
-        background=AppUi.shape(context,AppUi.panel,16)
+        background=AppUi.shape(context,AppUi.panel,AppUi.corner,AppUi.line)
     }
     val progress = ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal).apply {
         max=100; progressTintList=android.content.res.ColorStateList.valueOf(AppUi.yellow)
@@ -50,21 +50,22 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     }
     val localAccess = AppUi.button(context,"读取历史导入照片") {}.apply { visibility=View.GONE }
     val grid = PhotoGrid(context)
-    val cameraLabel = text("相机 · 尚未连接",12f,AppUi.muted)
+    val cameraLabel = text("相机 · 尚未连接",12f,AppUi.muted).apply { typeface=AppUi.mono }
     val selectAll = action("全选") { actions.selectAll() }
     val cancelSelection = action("取消") { actions.cancelSelection() }
     val headingTitle = text("相机照片",22f).apply { typeface=Typeface.DEFAULT_BOLD }
     val catalogSummary = text("",11f,AppUi.muted).apply { visibility=View.GONE }
     private fun chipAction(value: String, run: () -> Unit) = action(value,run).apply {
-        setPadding(dp(14),0,dp(14),0); background=AppUi.chip(context,false,18)
+        setPadding(dp(12),0,dp(12),0); background=AppUi.chip(context,false)
     }
     val formatControl=chipAction("格式：全部 ▾") { actions.format() }
     val cardControl=chipAction("存储卡：全部 ▾") { actions.card() }.apply { visibility=View.GONE }
-    val count = text("",13f,AppUi.muted)
+    /** Shown like a frame counter. */
+    val count = text("",13f,AppUi.yellow).apply { typeface=AppUi.mono }
     val selectionLabel = text("长按滑动多选",13f,AppUi.muted)
     val download = AppUi.button(context,"导入原图",true) { actions.importSelected() }
     val retryTransfer = AppUi.button(context,"继续导入未完成照片") { actions.retry() }.apply { visibility=View.GONE }
-    val footer = LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; visibility=View.GONE; elevation=dp(6).toFloat() }
+    val footer = LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; visibility=View.GONE }
     val emptyTitle = text("把照片，带回手机",24f).apply { gravity=Gravity.CENTER }
     val emptyHint = text("先在相机上开启 Wi-Fi，应用会自动识别并连接。断开后相机会自动关闭 Wi-Fi，下次需要重新开启。",14f,AppUi.muted).apply { gravity=Gravity.CENTER; setLineSpacing(dp(3).toFloat(),1f) }
     val connect = AppUi.button(context,"连接相机",true) { actions.connect() }
@@ -78,7 +79,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         val header=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(4),dp(8),0,0) }
         val brand=LinearLayout(context).apply {
             gravity=Gravity.CENTER_VERTICAL
-            addView(text("Zf",24f).apply { typeface=Typeface.create("serif",Typeface.ITALIC) })
+            addView(text("Zf",24f,AppUi.yellow).apply { typeface=AppUi.serif })
             addView(text(" 传图",22f).apply { typeface=Typeface.DEFAULT_BOLD })
         }
         header.addView(brand,LinearLayout.LayoutParams(0,dp(44),1f))
@@ -88,8 +89,8 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         },LinearLayout.LayoutParams(dp(44),dp(44)))
         root.addView(header)
         root.addView(LinearLayout(context).apply {
-            gravity=Gravity.CENTER_VERTICAL; setPadding(dp(14),0,dp(14),0); contentDescription="相机连接状态"
-            background=AppUi.shape(context,AppUi.panel,20)
+            gravity=Gravity.CENTER_VERTICAL; setPadding(dp(4),0,dp(4),0); contentDescription="相机连接状态"
+            background=AppUi.rules(context)
             setOnClickListener { actions.cameraStatus() }
             addView(ImageView(context).apply {
                 setImageResource(context.resources.getIdentifier("ic_launcher","mipmap",context.packageName))
@@ -100,12 +101,13 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         for (filter in PhotoFilter.entries) {
             val tab=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL }
             val label=action(filter.label) { switchFilter(filter) }
-            val underline=View(context).apply { visibility=View.GONE }
-            tab.addView(label,LinearLayout.LayoutParams(-1,dp(38)))
-            tab.addView(underline,LinearLayout.LayoutParams(0,0))
-            tabs.addView(tab,LinearLayout.LayoutParams(0,-2,1f).apply { marginEnd=dp(6) });filters[filter]=label to underline
+            val underline=View(context)
+            tab.addView(label,LinearLayout.LayoutParams(-1,dp(40)))
+            tab.addView(underline,LinearLayout.LayoutParams(-1,dp(2)))
+            tabs.addView(tab,LinearLayout.LayoutParams(0,-2,1f));filters[filter]=label to underline
         }
-        root.addView(tabs,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(10);bottomMargin=dp(6) })
+        root.addView(tabs,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(6) })
+        root.addView(View(context).apply { setBackgroundColor(AppUi.line) },LinearLayout.LayoutParams(-1,dp(1)).apply { bottomMargin=dp(6) })
         val heading=LinearLayout(context).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(4),dp(4),0,0) }
         heading.addView(headingTitle)
         heading.addView(count,LinearLayout.LayoutParams(0,-2,1f).apply { leftMargin=dp(10) })
@@ -136,8 +138,9 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
         gallery.addView(grid,FrameLayout.LayoutParams(-1,-1));gallery.addView(empty,FrameLayout.LayoutParams(-1,-1));grid.emptyView=empty
         root.addView(gallery,LinearLayout.LayoutParams(-1,0,1f))
         // The manual fallback is only exposed for empty filtered results; normal browsing prefetches.
-        footer.background=AppUi.shape(context,AppUi.panel,32)
-        footer.setPadding(dp(20),dp(10),dp(10),dp(10))
+        footer.background=AppUi.shape(context,AppUi.panel,AppUi.corner,AppUi.line)
+        footer.setPadding(dp(14),dp(8),dp(8),dp(8))
+        selectionLabel.typeface=AppUi.mono
         footer.addView(selectionLabel,LinearLayout.LayoutParams(0,-2,1f))
         footer.addView(download,LinearLayout.LayoutParams(dp(150),dp(52)))
         root.addView(footer,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(8);bottomMargin=dp(8) })
@@ -147,10 +150,11 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     }
     fun renderFilter(active: PhotoFilter, visible: Int, enabled: Boolean) {
         activeFilter=active
-        count.text=visible.toString()
+        count.text="%02d".format(visible)
         filters.forEach { (filter,pair) ->
-            pair.first.setTextColor(if(filter==active) AppUi.onAccentContainer else AppUi.muted)
-            pair.first.background=AppUi.chip(context,filter==active,19)
+            pair.first.setTextColor(if(filter==active) AppUi.ink else AppUi.muted)
+            pair.first.typeface=if(filter==active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            pair.second.setBackgroundColor(if(filter==active) AppUi.yellow else Color.TRANSPARENT)
             pair.first.isSelected=filter==active;pair.first.isEnabled=enabled
         }
     }
