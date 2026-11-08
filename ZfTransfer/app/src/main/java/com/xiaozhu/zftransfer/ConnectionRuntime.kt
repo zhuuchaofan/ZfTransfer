@@ -50,7 +50,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var cameraIdentity: String?
         get() = imports.identity
         set(value) { imports.identity = value }
-    @Volatile var cameraName = "Nikon Zf"
+    @Volatile var cameraName = "相机"
     val gallery = GalleryState()
     val thumbs = object : android.util.LruCache<Long, Bitmap>(THUMB_CACHE_BYTES) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
@@ -160,6 +160,12 @@ class ConnectionRuntime(private val context: android.content.Context) {
             catch (e: Exception) {
                 log("FAIL ${e.stackTraceToString()}")
                 if (operation == UserOperation.CONNECT) session.disconnect() else session.recoverAfterFailure()
+                if (e is UnsupportedCameraException) {
+                    // Retrying cannot help: stay off this network until it drops or the user connects again.
+                    lifetime.stop(); preparation.reset(); autoGate.stop(sessionNetwork?.networkHandle)
+                    presentIssue(UserIssues.from(e, operation))
+                    return@execute
+                }
                 if (!userStopped && client == null) lifetime.failed(now())
                 if (userStopped) report("已停止。已成功导入的照片仍保留，未完成文件不会标记为已导入。")
                 else if (operation == UserOperation.CONNECT && lifetime.desired && preparation.retryQuietly(e)) {
@@ -237,7 +243,12 @@ class ConnectionRuntime(private val context: android.content.Context) {
         ensureConnecting(c)
         val info = c.getDeviceInfo()
         ensureConnecting(c)
-        log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
+        log("Camera manufacturer=${info.manufacturer}; model=${info.model}; firmware=${info.deviceVersion}; " +
+            "extension=${info.vendorExtensionDescription}; advertised ops=${info.operationsSupported.size}; support=${CameraSupport.levelOf(info)}")
+        if (CameraSupport.levelOf(info) == CameraSupport.Level.NOT_NIKON) {
+            session.disconnect()
+            throw UnsupportedCameraException(CameraSupport.refusal(info))
+        }
         rememberCamera(address, candidate)
         readyClient = c
         return c to info
@@ -260,7 +271,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
             log("No stable serial: duplicate skipping disabled")
             presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
         }
-        report("已连接 ${info.displayName}，正在读取照片…")
+        report("已连接 ${info.displayName}，正在读取照片…" +
+            if (CameraSupport.levelOf(info) == CameraSupport.Level.OTHER_NIKON) "\n${CameraSupport.OTHER_NIKON_NOTE}" else "")
         lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
     /** The whole camera catalog in one go, sorted newest first across every card; thumbnails follow in the background. */

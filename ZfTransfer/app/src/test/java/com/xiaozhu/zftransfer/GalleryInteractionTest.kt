@@ -430,6 +430,21 @@ class GalleryInteractionTest {
         assertFalse(ImportEvidence.matches(100, 100, 0, "image/png"))
         assertTrue(ImportEvidence.matches(100, 100, 0, "image/x-nikon-nef"))
     }
+    @Test fun importedAlbumListsJpegAndRawButNothingElse() {
+        assertTrue(ImportEvidence.importableMime("image/jpeg"))
+        for (raw in listOf("image/x-nikon-nef", "image/x-nikon-nrw", "image/x-adobe-dng", "image/dng")) {
+            assertTrue(raw, ImportEvidence.importableMime(raw)); assertTrue(raw, ImportEvidence.isRawMime(raw))
+        }
+        assertFalse(ImportEvidence.isRawMime("image/jpeg"))
+        assertFalse(ImportEvidence.importableMime("image/heif"))
+        assertFalse(ImportEvidence.importableMime(null))
+    }
+    @Test fun refusedCameraKeepsItsOwnExplanation() {
+        val issue = UserIssues.from(UnsupportedCameraException("这不是尼康相机（Sony ILCE-7M4），本应用只支持尼康相机。"), UserOperation.CONNECT)
+        assertEquals("不支持这台相机", issue.title)
+        assertTrue(issue.message.contains("Sony ILCE-7M4"))
+        assertEquals(Recovery.WIFI_SETTINGS, issue.recovery)
+    }
     @org.junit.Test fun filmstripPrefetchesNearEndOnly() {
     }
     @org.junit.Test fun taskSnapshotControlsImportAndRetryConsistently() {

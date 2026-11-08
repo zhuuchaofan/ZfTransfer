@@ -16,7 +16,7 @@ import java.util.concurrent.Executors
 /** Local album controller. Historical folder files never establish camera import evidence. */
 class LocalImportGallery(private val activity: Activity, private val changed: () -> Unit) : AutoCloseable {
     private val contentResolver get() = activity.contentResolver
-    private data class Photo(val uri: Uri, val name: String, val size: Long, val date: Long, val confirmed: Boolean)
+    private data class Photo(val uri: Uri, val name: String, val size: Long, val date: Long, val confirmed: Boolean, val raw: Boolean)
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var closed = false
@@ -72,8 +72,9 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
             // published copies from this app's own album, never from filename guesses.
             runCatching {
                 contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    arrayOf("_id", "owner_package_name"), "relative_path = ? AND is_pending = 0 AND mime_type = ?",
-                    arrayOf("Pictures/ZfTransfer/", "image/jpeg"), null)?.use { cursor ->
+                    arrayOf("_id", "owner_package_name"),
+                    "relative_path = ? AND is_pending = 0 AND mime_type IN (${ImportEvidence.MIMES.joinToString(",") { "?" }})",
+                    arrayOf("Pictures/ZfTransfer/") + ImportEvidence.MIMES, null)?.use { cursor ->
                     while (cursor.moveToNext()) {
                         val owned = cursor.getString(1) == activity.packageName
                         if(owned) ownedIds.add(cursor.getLong(0).toString())
@@ -86,10 +87,11 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
                     val uri = Uri.parse(value)
                     require(uri.scheme == "content" && uri.authority == MediaStore.AUTHORITY)
                     contentResolver.query(uri, arrayOf("_display_name", "_size", "is_pending", "mime_type", "date_added"), null, null, null)?.use { c ->
-                        if (!c.moveToFirst() || c.getInt(2) != 0 || c.getString(3) != "image/jpeg" || c.getLong(1) <= 0) return@use null
+                        if (!c.moveToFirst() || c.getInt(2) != 0 || !ImportEvidence.importableMime(c.getString(3)) || c.getLong(1) <= 0) return@use null
                         val size = c.getLong(1)
                         if (contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize == size } != true) return@use null
-                        Photo(uri, c.getString(0), size, c.getLong(4), ImportEvidence.confirmsLocal(uri.lastPathSegment in recordedIds, uri.lastPathSegment in ownedIds))
+                        Photo(uri, c.getString(0), size, c.getLong(4), ImportEvidence.confirmsLocal(uri.lastPathSegment in recordedIds, uri.lastPathSegment in ownedIds),
+                            ImportEvidence.isRawMime(c.getString(3)))
                     }
                 }.getOrNull()
             }.sortedByDescending { it.date }
@@ -103,10 +105,17 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
             }
         }
     }
-    private fun decode(photo: Photo, edge: Int): Bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, photo.uri)) { decoder, info, _ ->
-        val ratio = minOf(1.0, edge.toDouble() / maxOf(info.size.width, info.size.height))
-        decoder.setTargetSize(maxOf(1, (info.size.width * ratio).toInt()), maxOf(1, (info.size.height * ratio).toInt()))
-        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+    private fun decode(photo: Photo, edge: Int): Bitmap {
+        val decoded = runCatching {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, photo.uri)) { decoder, info, _ ->
+                val ratio = minOf(1.0, edge.toDouble() / maxOf(info.size.width, info.size.height))
+                decoder.setTargetSize(maxOf(1, (info.size.width * ratio).toInt()), maxOf(1, (info.size.height * ratio).toInt()))
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+        }
+        if (!photo.raw) return decoded.getOrThrow()
+        // Not every RAW decodes here (DNG does, NEF depends on the phone); the system thumbnail uses the embedded preview.
+        return decoded.getOrElse { contentResolver.loadThumbnail(photo.uri, android.util.Size(edge, edge), null) }
     }
     private fun thumbnail(photo: Photo): Bitmap? {
         thumbs.get(photo.uri)?.let { return it }
@@ -140,7 +149,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
         val request = ++generation
         dialog.counter.text = "${position + 1} / ${photos.size}"
         dialog.name.text = photo.name + if(photo.confirmed) " · 已导入" else " · 历史相册文件"
-        dialog.size.text = "JPEG · ${"%.1f".format(photo.size / 1048576.0)} MB"
+        dialog.size.text = "${if (photo.raw) "RAW" else "JPEG"} · ${"%.1f".format(photo.size / 1048576.0)} MB"
         dialog.quality.text = "正在加载手机原图…"
         dialog.image.showPhoto(thumbnail(photo), detailed = false)
         dialog.previous.isEnabled = position > 0; dialog.next.isEnabled = position < photos.lastIndex
@@ -151,7 +160,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
                 if (closed || request != generation || !dialog.isShowing) { bitmap?.recycle(); return@post }
                 if (bitmap != null) {
                     dialog.image.showPhoto(bitmap, detailed = true)
-                    dialog.quality.text = "本地原图预览 · 双击或双指缩放"
+                    dialog.quality.text = if (photo.raw) "RAW 预览 · 双击或双指缩放" else "本地原图预览 · 双击或双指缩放"
                 } else dialog.quality.text = "手机文件不可读取，请返回刷新"
             }
         }
