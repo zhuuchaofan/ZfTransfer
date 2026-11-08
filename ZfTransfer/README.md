@@ -1,4 +1,4 @@
-# Zf 传图 · 0.5.9
+# 取片（原 Zf 传图）· 0.5.9
 
 面向小米 14 与 Nikon Zf，通过相机 Wi-Fi 浏览照片，并把 JPEG 原图保存到系统相册 `Pictures/ZfTransfer`。
 

@@ -1,9 +1,7 @@
 # 图标与视觉来源
 
-启动图标源文件：../ZfTransfer/app/src/main/res/drawable-nodpi/app_icon.png
+启动图标是矢量图：`../ZfTransfer/app/src/main/res/drawable/ic_launcher_foreground.xml`，背景色 `icon_background`（`#15120E`），由 adaptive-icon 提供启动器裁切。
 
-由内置 image_gen 工具生成；adaptive-icon 资源提供 Android 启动器裁切。未使用 Nikon 官方字标。菜单与选择图标使用 Material 标准矢量路径。
+图案是一格带齿孔的胶片，中间一个向下的箭头，表示把照片从相机取出来；颜色与界面的胶片机身调色板一致（见 UI规范）。图形在 108dp 画布中心 66dp 安全区内，不含文字和任何相机品牌字标。菜单与选择图标使用 Material 标准矢量路径。
 
-生成提示：Create one Android launcher icon asset for Zf 传图, a Nikon Zf Wi-Fi JPEG original photo importer. Square PNG, warm yellow #F2C45B background, dark charcoal #101112 retro mirrorless camera silhouette, concentric lens, top dials, premium photography tool, recognizable at small sizes. No text, no letters, no watermark, no official Nikon wordmark. Keep foreground centered for Android adaptive icon safe area.
-
-选定设计：三列照片网格 + 点击进入大图预览 + 重复导入三选一。界面真实截图保存在 ../build-local/phone-refined.png；它是未连接状态，不是照片下载功能验证。
+0.5.16 及以前使用 image_gen 生成的黄底相机剪影 PNG，已删除。

@@ -1,3 +1,18 @@
-<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="12dp">
-    <bitmap android:src="@drawable/app_icon" android:gravity="fill" />
-</inset>
+<!-- Adaptive icon foreground: one frame of film with sprocket holes, an arrow taking the photo out.
+     Drawn inside the 66dp safe zone of the 108dp canvas; colors follow AppUi (filmBase, brass, ink, background). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#0B0907" android:pathData="M28.4,34.8h51.2v38.4h-51.2z" />
+    <path android:fillColor="#C9A25C" android:pathData="
+        M30.8,36.8h4v2.8h-4z M38,36.8h4v2.8h-4z M45.2,36.8h4v2.8h-4z M52.4,36.8h4v2.8h-4z
+        M59.6,36.8h4v2.8h-4z M66.8,36.8h4v2.8h-4z M74,36.8h4v2.8h-4z
+        M30.8,68.4h4v2.8h-4z M38,68.4h4v2.8h-4z M45.2,68.4h4v2.8h-4z M52.4,68.4h4v2.8h-4z
+        M59.6,68.4h4v2.8h-4z M66.8,68.4h4v2.8h-4z M74,68.4h4v2.8h-4z" />
+    <path android:fillColor="#EDE3CF" android:pathData="M37.2,41.2h32v24h-32z" />
+    <path android:strokeColor="#15120E" android:strokeWidth="3.4" android:strokeLineCap="butt"
+        android:pathData="M54,45.2V57.6" />
+    <path android:strokeColor="#15120E" android:strokeWidth="3.4" android:strokeLineCap="square"
+        android:strokeLineJoin="miter" android:fillColor="#00000000"
+        android:pathData="M48.4,54L54,59.6L59.6,54" />
+</vector>

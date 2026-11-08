@@ -596,7 +596,7 @@ class MainActivity : Activity() {
         } }
     }
     private fun showLicense() {
-        newSheet("关于 Zf 传图").apply {
+        newSheet("关于取片").apply {
             message("版本 ${packageManager.getPackageInfo(packageName,0).versionName?.removeSuffix("-test")}\n遵循 GPL-3.0 开源许可证。\n基于 noisetta/Nikon-Pull 与 jaminxx-aha/ZPill 构建。\n源代码：github.com/zhuuchaofan/ZfTransfer")
             action("开源许可证") {
                 newSheet("开源许可证").apply { message(assets.open("LICENSE.txt").bufferedReader().use { it.readText() });action("关闭");show() }
