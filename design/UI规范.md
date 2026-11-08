@@ -53,7 +53,7 @@
 ## 4. 间距与尺寸
 
 - 页面左右内边距 12dp。
-- 照片网格 3 列，间距 4dp。`GalleryPhotoCell.cellHeight` 里扣除的宽度（左右 24dp + 间距 8dp = 32dp）必须与此保持一致，改间距要同步改这里。
+- 照片网格 3 列，间距 4dp。`GalleryPhotoCell.cellHeight` 里扣除的宽度（左右 24dp + 间距 8dp = 32dp）必须与此保持一致，改间距要同步改这里；同样依赖这两个数的还有 `LocalImportGallery` 的格子高度（扣除 32dp）和 `MainActivity` 日期标题行的兜底宽度（扣除左右 24dp）。
 - 常用纵向间距：4、6、8、10dp。
 - 按钮高度：主要按钮 52dp，导入栏按钮宽 150dp，弹层内按钮高 50dp。
 - 可点击区域最小 44dp；照片上的选择标记触控区 44dp，圆形本体 22dp。

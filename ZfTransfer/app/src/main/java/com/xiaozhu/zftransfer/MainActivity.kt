@@ -314,7 +314,7 @@ class MainActivity : Activity() {
         sheet.body.addView(AppUi.text(this,"密码"),LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(10) })
         val password = AppUi.input(this,if(saved==null) "Wi-Fi 密码" else "留空使用已保存的密码",true)
         sheet.body.addView(password,LinearLayout.LayoutParams(-1,dp(50)))
-        val error = AppUi.text(this,"",12f,0xffff847b.toInt()).apply { visibility=View.GONE }
+        val error = AppUi.text(this,"",12f,AppUi.danger).apply { visibility=View.GONE }
         sheet.body.addView(error)
         val remember = Switch(this).apply {
             text="加密保存，下次自动连接";textSize=14f;setTextColor(Color.WHITE);isChecked=true
@@ -394,7 +394,7 @@ class MainActivity : Activity() {
     }
     private fun dayHeader(header: GridCell.Header): View {
         val items = DayGroups.photosOf(header, visiblePhotos).filter { it.canImport }
-        val width = if (grid.width > 0) grid.width - grid.paddingLeft - grid.paddingRight else resources.displayMetrics.widthPixels - dp(16)
+        val width = if (grid.width > 0) grid.width - grid.paddingLeft - grid.paddingRight else resources.displayMetrics.widthPixels - dp(24)
         return cells.header(header.day, header.count, items.isNotEmpty(), items.isNotEmpty() && items.all { it.handle in selected }, width) { toggleDay(header) }
     }
     /** Selects every importable photo of the day, or clears them when they are all selected already. */

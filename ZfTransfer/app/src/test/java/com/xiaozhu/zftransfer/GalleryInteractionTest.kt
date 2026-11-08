@@ -354,16 +354,14 @@ class GalleryInteractionTest {
         assertNotNull(cache.find("second", 8))
         assertTrue(runCatching { cache.store("too-large", 13) { it.write(ByteArray(13)) } }.isFailure)
     }
-    @Test fun automaticHandshakeRetriesAreBoundedAndRespectStop() {
+    @Test fun automaticConnectTriesOncePerNetworkAndRespectsStop() {
         val gate = AutoConnectGate()
         assertTrue(gate.take(1, "192.168.1.1"))
-        repeat(2) {
-            assertTrue(gate.retryAfterFailure(1, "192.168.1.1"))
-            assertTrue(gate.take(1, "192.168.1.1"))
-        }
-        assertFalse(gate.retryAfterFailure(1, "192.168.1.1"))
+        assertFalse(gate.take(1, "192.168.1.1"))
         gate.stop(2)
-        assertFalse(gate.retryAfterFailure(2, "192.168.1.1"))
+        assertFalse(gate.take(2, "192.168.1.1"))
+        gate.lost(2)
+        assertTrue(gate.take(2, "192.168.1.1"))
     }
     @Test fun wifiProfileStringDoesNotExposePassword() {
         assertFalse(WifiProfile("sample", "test-only-password").toString().contains("test-only-password"))
@@ -444,8 +442,6 @@ class GalleryInteractionTest {
         assertEquals("不支持这台相机", issue.title)
         assertTrue(issue.message.contains("Sony ILCE-7M4"))
         assertEquals(Recovery.WIFI_SETTINGS, issue.recovery)
-    }
-    @org.junit.Test fun filmstripPrefetchesNearEndOnly() {
     }
     @org.junit.Test fun taskSnapshotControlsImportAndRetryConsistently() {
         val idle = TaskState()

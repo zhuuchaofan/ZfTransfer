@@ -50,7 +50,7 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
             val photo = photos[position]
             val image = (recycled as? ImageView) ?: ImageView(activity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                layoutParams = AbsListView.LayoutParams(-1, (resources.displayMetrics.widthPixels - AppUi.dp(context, 22)) / 3)
+                layoutParams = AbsListView.LayoutParams(-1, (resources.displayMetrics.widthPixels - AppUi.dp(context, 32)) / 3)
                 setBackgroundColor(AppUi.panel)
             }
             image.contentDescription = "预览 ${photo.name}"
