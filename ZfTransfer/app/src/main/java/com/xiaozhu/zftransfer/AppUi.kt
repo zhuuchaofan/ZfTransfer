@@ -34,14 +34,6 @@ object AppUi {
     const val corner = 4
     /** Frame counters, dates and other numbers. */
     val mono: Typeface = Typeface.MONOSPACE
-    /** Latin wordmarks only; Chinese stays sans because a serif CJK font is not on every phone. */
-    val serif: Typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
-    /** Hairlines above and below, like the rules on a film box. */
-    fun rules(context: Context): android.graphics.drawable.Drawable {
-        val px = dp(context, 1)
-        return android.graphics.drawable.LayerDrawable(arrayOf(android.graphics.drawable.ColorDrawable(line),
-            android.graphics.drawable.ColorDrawable(background))).apply { setLayerInset(1, 0, px, 0, px) }
-    }
     /** Round check marker used by photo cells and day headings. */
     fun applySelectIcon(view: ImageView, selected: Boolean) {
         val ctx = view.context

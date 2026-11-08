@@ -92,7 +92,7 @@ class PhotoPreviewController(
         val obj = photos.getOrNull(index) ?: return
         val c = client ?: return
         if (obj.size !in 1..originalPreviews.budget) {
-            showNotice("照片较大", "为避免占用过多临时空间，请先导入原图，再查看清晰预览。"); return
+            showNotice("照片较大", "为避免占用过多临时空间，请先取回原图，再查看清晰预览。"); return
         }
         val key = previewKey(obj)
         val generation = previewGeneration

@@ -5,15 +5,17 @@ data class TaskState(val operation: UserOperation? = null, val transfer: ImportP
     val running get() = operation != null
     val percentage get() = transfer?.percentage ?: 0
     fun previewImportLabel(handle: Long, imported: Boolean): String = when {
-        running && transfer?.handle == handle -> "正在导入 ${transfer.percentage}%"
-        running && transfer != null -> "其他照片导入 ${transfer.percentage}%"
+        running && transfer?.handle == handle -> "正在取回 ${transfer.percentage}%"
+        running && transfer != null -> "其他照片取回 ${transfer.percentage}%"
         running -> "正在处理…"
-        imported -> "再次导入"
-        else -> "导入原图"
+        imported -> "再次取回"
+        else -> "取回原图"
     }
     fun showRemaining(remaining: Int) = !running && remaining > 0
 }
-data class ImportProgress(val handle: Long, val percentage: Int) {
+/** [index] is zero-based within [total] photos of the batch; [filename] and [size] describe the photo being read. */
+data class ImportProgress(val handle: Long, val percentage: Int, val index: Int = 0, val total: Int = 0,
+    val filename: String = "", val size: Long = 0) {
     init { require(percentage in 0..100) }
 }
 

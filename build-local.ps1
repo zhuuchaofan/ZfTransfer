@@ -28,13 +28,24 @@ New-Item -ItemType Directory -Force $out, "$out\dex", "$out\generated" | Out-Nul
 function Check-Step { if ($LASTEXITCODE -ne 0) { throw "Build command failed with exit code $LASTEXITCODE" } }
 $sources = Get-ChildItem "$project\app\src\main\java" -Recurse -Filter *.kt | ForEach-Object FullName
 $tests = Get-ChildItem "$project\app\src\test\java" -Recurse -Filter *.kt | ForEach-Object FullName
+# cmd.exe caps a command line at 8191 characters and kotlinc.bat then fails without a word, so the file lists go
+# through kotlinc argument files.
+function Write-ArgFile([string]$path, [string[]]$files) {
+    $lines = [string[]]($files | ForEach-Object { '"' + ($_ -replace '\\', '/') + '"' })
+    [IO.File]::WriteAllLines($path, $lines, [Text.UTF8Encoding]::new($false))
+}
+Write-ArgFile "$out\sources.args" $sources
+Write-ArgFile "$out\tests.args" (@($sources) + @($tests))
 $junit = Join-Path $Studio 'lib\junit4.jar'
 $hamcrest = Join-Path $Studio 'lib\testFramework.jar'
-& "$kotlin\bin\kotlinc.bat" @sources @tests -classpath "$android;$junit" -jvm-target 17 -d "$out\tests.jar"
+Remove-Item "$out\tests.jar", "$out\classes.jar" -ErrorAction SilentlyContinue
+& "$kotlin\bin\kotlinc.bat" "@$out\tests.args" -classpath "$android;$junit" -jvm-target 17 -d "$out\tests.jar"
+if (!(Test-Path "$out\tests.jar")) { throw 'kotlinc produced no tests.jar' }
 Check-Step
-& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest com.xiaozhu.zftransfer.UpdateCheckerTest com.xiaozhu.zftransfer.FormatBrowseTest com.xiaozhu.zftransfer.DayGroupsTest io.github.noisetta.nikonpull.ptp.ObjectPropListTest com.xiaozhu.zftransfer.CameraCatalogTest com.xiaozhu.zftransfer.HotspotHintTest io.github.noisetta.nikonpull.ptp.CameraEventTest com.xiaozhu.zftransfer.StorageCardTest com.xiaozhu.zftransfer.AutoImportTest com.xiaozhu.zftransfer.ExifOrientationTest com.xiaozhu.zftransfer.ExifOrientationReadTest com.xiaozhu.zftransfer.CameraSupportTest | Tee-Object "$out\tests.txt"
+& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest com.xiaozhu.zftransfer.UpdateCheckerTest com.xiaozhu.zftransfer.FormatBrowseTest com.xiaozhu.zftransfer.DayGroupsTest io.github.noisetta.nikonpull.ptp.ObjectPropListTest com.xiaozhu.zftransfer.CameraCatalogTest com.xiaozhu.zftransfer.HotspotHintTest io.github.noisetta.nikonpull.ptp.CameraEventTest com.xiaozhu.zftransfer.StorageCardTest com.xiaozhu.zftransfer.AutoImportTest com.xiaozhu.zftransfer.ExifOrientationTest com.xiaozhu.zftransfer.ExifOrientationReadTest com.xiaozhu.zftransfer.CameraSupportTest com.xiaozhu.zftransfer.FreshPhotosTest | Tee-Object "$out\tests.txt"
 Check-Step
-& "$kotlin\bin\kotlinc.bat" @sources -classpath $android -jvm-target 17 -d "$out\classes.jar"
+& "$kotlin\bin\kotlinc.bat" "@$out\sources.args" -classpath $android -jvm-target 17 -d "$out\classes.jar"
+if (!(Test-Path "$out\classes.jar")) { throw 'kotlinc produced no classes.jar' }
 Check-Step
 & "$tools\aapt2.exe" compile --dir "$project\app\src\main\res" -o "$out\resources.zip"
 Check-Step

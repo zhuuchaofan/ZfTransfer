@@ -29,7 +29,7 @@ class PhotoPreviewDialog(activity: Activity, onHigh: () -> Unit, private val onP
     }
     val previous=arrow("上一张") { navigate(-1) }
     val next=arrow("下一张",true) { navigate(1) }
-    val import=ProgressActionButton(context).apply { text="导入原图";setOnClickListener { onImport() } }
+    val import=ProgressActionButton(context).apply { text="取回原图";setOnClickListener { onImport() } }
     val select=AppUi.button(context,"加入选择",false,onSelect)
     private var switching=false
     private fun navigate(direction: Int) {

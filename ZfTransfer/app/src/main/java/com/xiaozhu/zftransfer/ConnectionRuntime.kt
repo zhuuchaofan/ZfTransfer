@@ -309,8 +309,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
         ui {
             val before = gallery.photos.map { it.handle }.toSet()
             if (!gallery.setCatalog(catalogSession, catalog, verified)) return@ui
-            val added = catalog.count { it.handle !in before }
-            message = if (first) "已读取 ${catalog.size} 个文件" else if (added > 0) "相机有 $added 张新照片，已更新" else "相机文件已更新"
+            // With backup recording each shot lands on both cards; it is still one new photo.
+            val added = CopyGroups.unique(catalog.filter { it.handle !in before }).size
+            message = if (first) "已读取 ${CopyGroups.unique(catalog).size} 个文件" else if (added > 0) "相机有 $added 张新照片，已更新" else "相机文件已更新"
             revision++; changed()
             thumbnailFeeder.start(c, catalog.map { it.handle }, catalogSession)
             importNewPhotos()
@@ -446,19 +447,19 @@ class ConnectionRuntime(private val context: android.content.Context) {
         if (importable.isEmpty() || busy.get()) return
         gallery.completions.beginBatch()
         task(operation = UserOperation.IMPORT) {
-            if (items.isEmpty()) { report("已导入 0 张，跳过 $skippedEarlier 张。"); return@task }
+            if (items.isEmpty()) { report("已取回 0 张，跳过 $skippedEarlier 张。"); return@task }
             val c = client ?: error("请先连接相机")
             val (done, skipped) = transfers.run(c, items, skipExisting, retry,
                 checkActive = { check(client === c) { "已停止传输" } },
                 progress = { index, obj, percentage ->
                     report("正在下载 ${index + 1}/${items.size}：${obj.filename} · $percentage%")
-                    ui { taskState = TaskState(UserOperation.IMPORT, ImportProgress(obj.handle, percentage.coerceIn(0, 100))); changed() }
+                    ui { taskState = TaskState(UserOperation.IMPORT, ImportProgress(obj.handle, percentage.coerceIn(0, 100), index, items.size, obj.filename, obj.size)); changed() }
                 }, completed = { obj, verified -> ui {
                     gallery.completions.record(obj.handle)
                     gallery.markImported(obj.handle, verified)
                     revision++; changed()
                 } })
-            report("已导入 $done 张，跳过 ${skipped + skippedEarlier} 张。已保存到手机相册。")
+            report("已取回 $done 张，跳过 ${skipped + skippedEarlier} 张，已保存到手机相册。")
         }
     }
 }

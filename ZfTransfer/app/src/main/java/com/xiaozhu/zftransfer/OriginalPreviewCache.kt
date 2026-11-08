@@ -24,7 +24,7 @@ class OriginalPreviewCache(private val root: File, val budget: Long = 192L * 102
     }?.also { it.setLastModified(System.currentTimeMillis()) }
 
     @Synchronized fun store(key: String, size: Long, write: (OutputStream) -> Unit): File {
-        require(size in 1..budget) { "照片过大，请先导入原图后预览" }
+        require(size in 1..budget) { "照片过大，请先取回原图后预览" }
         check(root.isDirectory || root.mkdirs()) { "无法创建预览缓存" }
         val temporary = File.createTempFile("preview_", ".part", root)
         try {

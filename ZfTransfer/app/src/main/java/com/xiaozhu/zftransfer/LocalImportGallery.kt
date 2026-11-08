@@ -32,7 +32,9 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
     private val pending = mutableSetOf<Uri>()
     private val failed = mutableSetOf<Uri>()
     private var stripItems = emptyList<io.github.noisetta.nikonpull.ptp.CameraObject>()
-    private val thumbs = object : LruCache<Uri, Bitmap>(16 * 1024 * 1024) {
+    /** Thumbnails decode in parallel, apart from the album queries and full previews on [worker]. */
+    private val thumbWorkers = Executors.newFixedThreadPool(3)
+    private val thumbs = object : LruCache<Uri, Bitmap>(32 * 1024 * 1024) {
         override fun sizeOf(key: Uri, value: Bitmap) = value.allocationByteCount
     }
     val size get() = photos.size
@@ -117,18 +119,25 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
         // Not every RAW decodes here (DNG does, NEF depends on the phone); the system thumbnail uses the embedded preview.
         return decoded.getOrElse { contentResolver.loadThumbnail(photo.uri, android.util.Size(edge, edge), null) }
     }
+    /**
+     * Decoded from the original at the cell's size: the JPEG decoder scales while decoding, so this is quick enough
+     * on [thumbWorkers]. The system's cached thumbnail was faster still but visibly soft at this cell size.
+     */
+    private fun loadThumbnail(photo: Photo): Bitmap = decode(photo, THUMB_EDGE)
     private fun thumbnail(photo: Photo): Bitmap? {
         thumbs.get(photo.uri)?.let { return it }
-        if (!closed && photo.uri !in failed && pending.add(photo.uri)) worker.execute {
-            val bitmap = runCatching { decode(photo, 384) }.logFailure("Local thumbnail decode failed").getOrNull()
+        if (!closed && photo.uri !in failed && pending.add(photo.uri)) runCatching { thumbWorkers.execute {
+            val bitmap = runCatching { loadThumbnail(photo) }.logFailure("Local thumbnail decode failed").getOrNull()
             main.post {
                 pending.remove(photo.uri)
                 if (closed) { bitmap?.recycle(); return@post }
-                if (bitmap != null) { thumbs.put(photo.uri, bitmap); adapter.notifyDataSetChanged(); refreshStrip() } else failed.add(photo.uri)
+                if (bitmap != null) { thumbs.put(photo.uri, bitmap); adapter.notifyDataSetChanged(); refreshStrip(); changed() } else failed.add(photo.uri)
             }
-        }
+        } }
         return null
     }
+    /** For the home screen: the [index]th newest photo in the current list, loaded like a grid cell. */
+    fun thumbnailAt(index: Int): Bitmap? = photos.getOrNull(index)?.let(::thumbnail)
     private fun refreshStrip() {
         val dialog = viewer ?: return
         if (dialog.isShowing) dialog.strip.submit(stripItems, index, { handle -> photos.getOrNull(handle.toInt())?.let(::thumbnail) }, ::open)
@@ -166,6 +175,8 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
         }
     }
     override fun close() {
-        closed = true; generation++; viewer?.dismiss(); worker.shutdownNow(); thumbs.evictAll()
+        closed = true; generation++; viewer?.dismiss(); worker.shutdownNow(); thumbWorkers.shutdownNow(); thumbs.evictAll()
     }
+    /** A cell is about 370px wide and its image is cropped and enlarged 1.15×, so 384px looked soft. */
+    private companion object { const val THUMB_EDGE = 512 }
 }
