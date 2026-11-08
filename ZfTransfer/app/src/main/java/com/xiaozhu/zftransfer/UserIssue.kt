@@ -15,6 +15,10 @@ object UserIssues {
     fun from(error: Throwable, operation: UserOperation): UserIssue {
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         val detail = chain.joinToString(" ") { it.message.orEmpty() }.lowercase()
+        // Written by CameraSupport for the user, not a raw provider message.
+        chain.firstOrNull { it is UnsupportedCameraException }?.let {
+            return UserIssue("不支持这台相机", it.message.orEmpty() + "请连接尼康相机的 Wi-Fi。", Recovery.WIFI_SETTINGS)
+        }
         return when {
             "请连接原来的相机" in detail -> UserIssue("请连接原来的相机", "未完成任务属于另一台相机。请连接原相机后重试，或重新选择照片开始新任务。", Recovery.WIFI_SETTINGS)
             "相机照片已变化" in detail || "剩余任务已变化" in detail -> UserIssue("照片信息发生变化", "为避免下载错误照片，本次重试已停止。请重新浏览相机并选择需要的照片。", Recovery.NONE)

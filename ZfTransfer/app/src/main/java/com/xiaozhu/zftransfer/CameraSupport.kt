@@ -20,3 +20,6 @@ object CameraSupport {
         "这不是尼康相机（${listOf(info.manufacturer, info.model).filter { it.isNotBlank() }.joinToString(" ")}），本应用只支持尼康相机。"
     const val OTHER_NIKON_NOTE = "本应用主要为 Nikon Zf 适配，其他尼康机型可能有部分功能不可用。"
 }
+
+/** A camera the app refuses to work with. Not a connection failure: it is never retried automatically. */
+class UnsupportedCameraException(message: String) : IllegalStateException(message)
