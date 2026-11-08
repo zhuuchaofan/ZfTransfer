@@ -50,7 +50,7 @@ class GalleryScreen(private val context: Context, adapter: BaseAdapter, private 
     }
     val localAccess = AppUi.button(context,"读取历史导入照片") {}.apply { visibility=View.GONE }
     val grid = PhotoGrid(context)
-    val cameraLabel = text("Nikon Zf · 尚未连接",12f,AppUi.muted)
+    val cameraLabel = text("相机 · 尚未连接",12f,AppUi.muted)
     val selectAll = action("全选") { actions.selectAll() }
     val cancelSelection = action("取消") { actions.cancelSelection() }
     val headingTitle = text("相机照片",22f).apply { typeface=Typeface.DEFAULT_BOLD }

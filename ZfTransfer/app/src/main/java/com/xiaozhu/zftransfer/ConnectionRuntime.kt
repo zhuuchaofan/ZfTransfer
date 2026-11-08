@@ -50,7 +50,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var cameraIdentity: String?
         get() = imports.identity
         set(value) { imports.identity = value }
-    @Volatile var cameraName = "Nikon Zf"
+    @Volatile var cameraName = "相机"
     val gallery = GalleryState()
     val thumbs = object : android.util.LruCache<Long, Bitmap>(THUMB_CACHE_BYTES) {
         override fun sizeOf(key: Long, value: Bitmap) = value.byteCount
@@ -237,7 +237,12 @@ class ConnectionRuntime(private val context: android.content.Context) {
         ensureConnecting(c)
         val info = c.getDeviceInfo()
         ensureConnecting(c)
-        log("Camera model=${info.model}; advertised ops=${info.operationsSupported.size}")
+        log("Camera manufacturer=${info.manufacturer}; model=${info.model}; firmware=${info.deviceVersion}; " +
+            "extension=${info.vendorExtensionDescription}; advertised ops=${info.operationsSupported.size}; support=${CameraSupport.levelOf(info)}")
+        if (CameraSupport.levelOf(info) == CameraSupport.Level.NOT_NIKON) {
+            session.disconnect()
+            error(CameraSupport.refusal(info))
+        }
         rememberCamera(address, candidate)
         readyClient = c
         return c to info
@@ -260,7 +265,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
             log("No stable serial: duplicate skipping disabled")
             presentIssue(UserIssue("无法确认历史导入", "相机未提供稳定标识，本次不会显示已导入或自动跳过照片。", Recovery.NONE))
         }
-        report("已连接 ${info.displayName}，正在读取照片…")
+        report("已连接 ${info.displayName}，正在读取照片…" +
+            if (CameraSupport.levelOf(info) == CameraSupport.Level.OTHER_NIKON) "\n${CameraSupport.OTHER_NIKON_NOTE}" else "")
         lifetime.connected(); preparation.reset(); ui { issue = null }; revision++
     }
     /** The whole camera catalog in one go, sorted newest first across every card; thumbnails follow in the background. */
