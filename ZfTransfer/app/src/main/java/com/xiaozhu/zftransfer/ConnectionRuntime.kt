@@ -35,6 +35,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
     var serviceActive = false
     private val prefs = context.getSharedPreferences("transfers", 0)
     private val wifiStore = WifiProfileStore(context)
+    val bleStore = BleWakeStore(context)
+    val bluetooth by lazy { CameraBluetooth(context, bleStore, ::log) }
+    @Volatile var pendingWakeSsid: String? = null
     private val locator by lazy { CameraEndpointLocator(context, prefs, wifiStore) { cameraWifi.requestedNetwork } }
     val imports = ImportRepository(context.contentResolver, prefs, ::log)
     val transfers = TransferCoordinator(imports, TransferQueueStore(context.getSharedPreferences("transfer_queue", 0)))
@@ -198,6 +201,10 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 return
             }
             val profile = wifiStore.load()
+            if (bleStore.isPaired) {
+                wakeOrJoinHotspot(profile, automatic)
+                return
+            }
             if (!automatic && profile != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
                 profileAttempted = true; requestWifi(profile, false)
             } else if (!automatic) {
@@ -224,6 +231,68 @@ class ConnectionRuntime(private val context: android.content.Context) {
             loadCatalog(c)
         }
     }
+    /**
+     * When the phone is not yet on the camera's Wi-Fi and Bluetooth pairing is configured:
+     * checks nearby Wi-Fi first; if no camera hotspot is on, wakes the camera over BLE, scans for the woken
+     * hotspot (containing "SnapBridge" or starting with the saved camera name), and joins it using the saved
+     * password (or asks the user once and saves it).
+     */
+    private fun wakeOrJoinHotspot(profile: WifiProfile?, automatic: Boolean) {
+        if (!ensureService()) return
+        val savedNames = setOfNotNull(profile?.ssid, prefs.getString("last_camera_ssid", null), bleStore.cameraName)
+        var readySsid: String? = null
+        var wakeIssue: UserIssue? = null
+        task(operation = UserOperation.WIFI, silentErrors = automatic, onComplete = {
+            val ssid = readySsid
+            val failed = wakeIssue
+            if (userStopped) return@task
+            if (failed != null) {
+                presentIssue(failed, !automatic)
+                return@task
+            }
+            if (ssid != null) {
+                val latestProfile = wifiStore.load() ?: profile
+                if (latestProfile != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
+                    profileAttempted = true
+                    requestWifi(WifiProfile(ssid, latestProfile.password), automatic)
+                } else if (latestProfile == null) {
+                    report("已开启相机热点 $ssid，请输入一次 Wi-Fi 密码。")
+                    pendingWakeSsid = ssid
+                    changed()
+                } else {
+                    presentIssue(UserIssue("未获得 Wi-Fi 连接权限", "请在应用权限中开启附近设备或位置权限，或在系统 Wi-Fi 设置中手动连接 $ssid。", Recovery.APP_SETTINGS), !automatic)
+                }
+            }
+        }) {
+            val existing = bluetooth.scanForWokenHotspot(savedNames, timeoutSeconds = 2)
+            if (existing != null) {
+                log("Camera hotspot already on nearby: $existing; skipping BLE wake")
+                readySsid = existing
+                return@task
+            }
+            when (val outcome = bluetooth.wakeHotspot(::report)) {
+                is BleWakeOutcome.Failed -> {
+                    wakeIssue = outcome.issue
+                    return@task
+                }
+                BleWakeOutcome.Woken -> {
+                    report("已发出蓝牙唤醒命令，正在搜索相机 Wi-Fi 热点…")
+                    val refreshedNames = setOfNotNull(profile?.ssid, prefs.getString("last_camera_ssid", null), bleStore.cameraName)
+                    val scanned = bluetooth.scanForWokenHotspot(refreshedNames, timeoutSeconds = 15)
+                    val target = scanned ?: BleWakeRules.fallbackWakeSsid(profile?.ssid ?: prefs.getString("last_camera_ssid", null), bleStore.cameraName)
+                    if (target != null) {
+                        readySsid = target
+                    } else {
+                        wakeIssue = UserIssue(
+                            "已唤醒相机但未搜到热点",
+                            "蓝牙唤醒命令已发送，但附近尚未搜到相机 Wi-Fi 热点。请在「相机 Wi-Fi 配置」中填写一次相机热点名称和密码，或直接在手机 Wi-Fi 设置中连接相机热点。",
+                            Recovery.WIFI_SETTINGS
+                        )
+                    }
+                }
+            }
+        }
+    }
     /** Dials the camera and verifies it answers; any stop request along the way aborts with "已停止连接". */
     private fun openSession(manual: String, preferred: Network): Pair<PtpIpClient, CameraDeviceInfo> {
         session.disconnect()
@@ -232,9 +301,12 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val network = candidate.network
         val address = candidate.address
         sessionNetwork = network
-        log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
+        val candidateSsid = locator.ssidOf(candidate.caps)
+            ?: if (cameraWifi.requestedNetwork == network) cameraWifi.requestedSsid else null
+        val ptpName = BleWakeRules.ptpClientNameFor(candidateSsid ?: cameraWifi.requestedSsid)
+        log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; ssid=${candidateSsid ?: "unknown"}; ptpName=$ptpName; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
         report("正在连接相机…")
-        val c = PtpIpClient(host = address, clientName = "ZfTransfer", socketFactory = network.socketFactory,
+        val c = PtpIpClient(host = address, clientName = ptpName, socketFactory = network.socketFactory,
             zfMode = true, log = ::log)
         c.onEvent = { event -> handleCameraEvent(c, event) }
         client = c

@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Sdk = 'D:\Android\SDK',
     [string]$Studio = 'C:\Program Files\Android\Android Studio',
     [switch]$Release,
@@ -42,7 +42,7 @@ Remove-Item "$out\tests.jar", "$out\classes.jar" -ErrorAction SilentlyContinue
 & "$kotlin\bin\kotlinc.bat" "@$out\tests.args" -classpath "$android;$junit" -jvm-target 17 -d "$out\tests.jar"
 if (!(Test-Path "$out\tests.jar")) { throw 'kotlinc produced no tests.jar' }
 Check-Step
-& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest com.xiaozhu.zftransfer.UpdateCheckerTest com.xiaozhu.zftransfer.FormatBrowseTest com.xiaozhu.zftransfer.DayGroupsTest io.github.noisetta.nikonpull.ptp.ObjectPropListTest com.xiaozhu.zftransfer.CameraCatalogTest com.xiaozhu.zftransfer.HotspotHintTest io.github.noisetta.nikonpull.ptp.CameraEventTest com.xiaozhu.zftransfer.StorageCardTest com.xiaozhu.zftransfer.AutoImportTest com.xiaozhu.zftransfer.ExifOrientationTest com.xiaozhu.zftransfer.ExifOrientationReadTest com.xiaozhu.zftransfer.CameraSupportTest com.xiaozhu.zftransfer.FreshPhotosTest | Tee-Object "$out\tests.txt"
+& $java -cp "$out\tests.jar;$junit;$hamcrest;$kotlin\lib\kotlin-stdlib.jar" org.junit.runner.JUnitCore io.github.noisetta.nikonpull.ptp.PtpDataParserTest io.github.noisetta.nikonpull.ptp.PtpIpClientTransferTest io.github.noisetta.nikonpull.ptp.CameraObjectClassificationTest com.xiaozhu.zftransfer.GalleryInteractionTest com.xiaozhu.zftransfer.WifiProfileRetryTest com.xiaozhu.zftransfer.GalleryStateTest com.xiaozhu.zftransfer.UpdateCheckerTest com.xiaozhu.zftransfer.FormatBrowseTest com.xiaozhu.zftransfer.DayGroupsTest io.github.noisetta.nikonpull.ptp.ObjectPropListTest com.xiaozhu.zftransfer.CameraCatalogTest com.xiaozhu.zftransfer.HotspotHintTest io.github.noisetta.nikonpull.ptp.CameraEventTest com.xiaozhu.zftransfer.StorageCardTest com.xiaozhu.zftransfer.AutoImportTest com.xiaozhu.zftransfer.ExifOrientationTest com.xiaozhu.zftransfer.ExifOrientationReadTest com.xiaozhu.zftransfer.CameraSupportTest com.xiaozhu.zftransfer.FreshPhotosTest com.xiaozhu.zftransfer.BleWakeTest | Tee-Object "$out\tests.txt"
 Check-Step
 & "$kotlin\bin\kotlinc.bat" "@$out\sources.args" -classpath $android -jvm-target 17 -d "$out\classes.jar"
 if (!(Test-Path "$out\classes.jar")) { throw 'kotlinc produced no classes.jar' }

@@ -19,6 +19,8 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
     private val notify = Runnable { changed() }
     var requestedNetwork: Network? = null
         private set
+    var requestedSsid: String? = null
+        private set
     var requesting = false
         private set
     val hasActiveRequest get() = requestCallback != null
@@ -44,23 +46,23 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
             override fun onAvailable(network: Network) { main.post {
                 if (requestCallback !== this) return@post
                 requesting = false; requestedNetwork = network
-                android.util.Log.i("ZfTransfer", "Wi-Fi profile request available; network=${network.networkHandle}")
+                android.util.Log.i("ZfTransfer", "Wi-Fi profile request available; network=${network.networkHandle}; ssid=${profile.ssid}")
                 status("相机 Wi-Fi 已连接，正在识别相机…"); schedule()
             } }
             override fun onLinkPropertiesChanged(network: Network, links: LinkProperties) = schedule()
             override fun onUnavailable() { main.post {
                 if (requestCallback !== this) return@post
-                requesting = false; requestCallback = null
+                requesting = false; requestCallback = null; requestedSsid = null
                 android.util.Log.i("ZfTransfer", "Wi-Fi profile request unavailable")
                 failure(UserIssues.wifiUnavailable(), interactive)
             } }
             override fun onLost(network: Network) { main.post {
                 if (requestCallback !== this) return@post
-                requestedNetwork = null; lost(network)
+                requestedNetwork = null; requestedSsid = null; lost(network)
                 status("相机 Wi-Fi 已断开。请重新连接后重试。")
             } }
         }
-        requestCallback = callback; requesting = true
+        requestCallback = callback; requesting = true; requestedSsid = profile.ssid
         try {
             val specifier = WifiNetworkSpecifier.Builder().setSsid(profile.ssid).setWpa2Passphrase(profile.password).build()
             cm.requestNetwork(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -74,7 +76,7 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
     }
     fun releaseRequest() {
         requestCallback?.let { runCatching { cm.unregisterNetworkCallback(it) } }
-        requestCallback = null; requestedNetwork = null; requesting = false
+        requestCallback = null; requestedNetwork = null; requestedSsid = null; requesting = false
     }
     fun close() {
         main.removeCallbacks(notify)

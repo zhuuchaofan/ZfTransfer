@@ -264,6 +264,10 @@ class MainActivity : Activity() {
         }
         renderHome()
         if (resumed) {
+            runtime.pendingWakeSsid?.let { ssid ->
+                runtime.pendingWakeSsid = null
+                dialogs.showWifiProfile(ssid)
+            }
             runtime.takeIssue()?.let { presentIssue(it.first, it.second) }
             // Wait for the camera Wi-Fi request: a second dialog now would cover the system's connect dialog.
             if (runtime.serviceActive && android.os.Build.VERSION.SDK_INT >= 33 && hasWindowFocus() && !cameraWifi.requesting &&
@@ -293,6 +297,7 @@ class MainActivity : Activity() {
             message = runtime.message,
             recentTitle = if (cameraRoll) "最近一卷" else "最近冲印",
             recentCount = if (cameraRoll) recent.size else minOf(RECENT, localGallery.size),
+            blePaired = runtime.bleStore.isPaired,
         )) { i -> if (cameraRoll) recent.getOrNull(i)?.let { images.thumbnail(it.handle) } else localGallery.thumbnailAt(i) }
         if (page == Page.HOME && cameraRoll) runtime.focusThumbnails(recent.map { it.handle })
     }
@@ -324,6 +329,16 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 43 && page == Page.PRINTS) localGallery.reload()
+        if (requestCode == 44) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) dialogs.startBlePairingFlow()
+            else presentIssue(UserIssue("未获得蓝牙权限", "蓝牙配对和唤醒相机需要「附近设备 / 蓝牙」权限。可在应用权限中开启，或直接在相机上手动开启 Wi-Fi 热点。", Recovery.APP_SETTINGS))
+            return
+        }
+        if (requestCode == 45) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) connectCamera()
+            else presentIssue(UserIssue("未获得蓝牙或 Wi-Fi 权限", "通过蓝牙唤醒并加入相机热点需要「附近设备」权限。可在应用权限中开启，或直接在相机上手动开启 Wi-Fi 热点。", Recovery.APP_SETTINGS))
+            return
+        }
         if (requestCode != 41) return
         val profile = pendingProfile; pendingProfile = null
         if (permissions.indexOf(wifiPermission()).let { it >= 0 && grantResults.getOrNull(it) == PackageManager.PERMISSION_GRANTED } && profile != null) requestWifi(profile, false)
@@ -420,7 +435,18 @@ class MainActivity : Activity() {
         screen.progress.visibility = if (value && !importing) View.VISIBLE else View.GONE
         updateGalleryControls()
     }
-    private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) = runtime.connectCamera(networkOverride, automatic)
+    private fun connectCamera(networkOverride: Network? = null, automatic: Boolean = false) {
+        if (!automatic && networkOverride == null && runtime.bleStore.isPaired && runtime.client == null) {
+            val needed = (CameraBluetooth.requiredPermissions().toList() + wifiPermission())
+                .distinct()
+                .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (needed.isNotEmpty()) {
+                requestPermissions(needed.toTypedArray(), 45)
+                return
+            }
+        }
+        runtime.connectCamera(networkOverride, automatic)
+    }
     private fun updateSelection() {
         previewController.refreshActions()
         screen.download.text = if (selected.isEmpty()) "取回" else "取回 ${selected.size}"

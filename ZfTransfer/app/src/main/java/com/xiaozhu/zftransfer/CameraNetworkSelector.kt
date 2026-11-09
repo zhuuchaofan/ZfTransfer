@@ -12,7 +12,7 @@ object CameraNetworkSelector {
             return when {
                 network.requested -> 100
                 ssid != null && ssid in names -> 90
-                ssid?.startsWith("NIKON", ignoreCase = true) == true -> 80
+                ssid != null && (ssid.startsWith("NIKON", ignoreCase = true) || BleWakeRules.isSnapBridgeSsid(ssid)) -> 80
                 manualAddress.isNotEmpty() -> 20 // Explicit advanced setting only.
                 ssid == null && !network.validated && network.address == knownAddress -> 10
                 else -> 0

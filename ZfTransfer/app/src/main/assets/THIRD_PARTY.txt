@@ -25,6 +25,13 @@ Revision inspected: ad9c801dd64ebaca9a45c64b1346e3b5e6448350
 
 Its README reports Xiaomi 14 + Nikon Zf Wi-Fi operation. No explicit repository LICENSE was found in this checkout, so its implementation has not been copied into this deliverable. That report does not establish this build's device compatibility.
 
+## Nikon Bluetooth Smart-Device Handshake — protocol reference
+
+The 4-step Blowfish challenge-response handshake on GATT service `0000de00-3dd4-4255-8d62-6dc7b9bd5561` (`NikonHandshake.kt`) is implemented from the protocol documentation and reverse engineering published by:
+- `rjmendez/nikongeotag` (GPL-3.0)
+- `hurui200320/nsg` (AGPL-3.0)
+- `gkoh/furble` (MIT)
+
 ## Build/runtime components
 
 Kotlin standard library (JetBrains), Apache-2.0, is bundled in the APK; its license/copyright files from the Gradle distribution are supplied under `licenses/`. Gradle wrapper retains upstream Apache-2.0 notices. Android SDK/build tools and JUnit are build/test tools, not bundled in the app. All included source is provided with the test APK.

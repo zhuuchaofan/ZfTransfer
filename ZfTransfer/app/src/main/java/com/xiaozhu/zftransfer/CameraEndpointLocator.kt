@@ -39,7 +39,17 @@ class CameraEndpointLocator(
 
     fun find(manual: String, only: Network? = null): WifiEndpoint? {
         val endpoints = wifiEndpoints(manual, only)
-        val names = setOfNotNull(wifiStore.load()?.ssid, prefs.getString("last_camera_ssid", null))
+        val savedSsid = wifiStore.load()?.ssid
+        val lastSsid = prefs.getString("last_camera_ssid", null)
+        val names = buildSet {
+            for (s in listOfNotNull(savedSsid, lastSsid)) {
+                add(s)
+                BleWakeRules.baseCameraName(s)?.let { base ->
+                    add(base)
+                    add(base + BleWakeRules.SNAPBRIDGE_SUFFIX)
+                }
+            }
+        }
         val chosen = CameraNetworkSelector.select(endpoints.map {
             CameraNetworkHint(it.network.networkHandle, it.address, ssidOf(it.caps),
                 it.caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED), it.network == requestedNetwork())

@@ -24,6 +24,7 @@ class HomeScreen(private val context: Context, private val actions: Actions) {
         val remaining: Int, val message: String,
         /** "最近一卷" (the camera's newest photos) or "最近冲印" (the newest ones on the phone); empty title hides it. */
         val recentTitle: String, val recentCount: Int,
+        val blePaired: Boolean = false,
     )
     private fun dp(n: Int) = AppUi.dp(context, n)
     private fun text(value: String, size: Float = 14f, color: Int = AppUi.ink) = AppUi.text(context, value, size, color)
@@ -132,7 +133,8 @@ class HomeScreen(private val context: Context, private val actions: Actions) {
         countUnit.text = if (s.fresh.hasHistory) "张新照片" else "张还没取到手机"
         caption.text = when {
             !s.connected && s.connecting -> s.message.ifEmpty { "正在连接相机，请保持手机连接相机 Wi-Fi。" }
-            !s.connected -> "先在相机上开启 Wi-Fi，应用会自动识别并连接。断开后相机会自动关闭 Wi-Fi，下次需要重新开启。"
+            !s.connected && s.blePaired -> "已开启蓝牙唤醒：点「连接相机」会自动通过蓝牙唤醒相机 Wi-Fi 热点并连接，也可在相机上手动开启。"
+            !s.connected -> "先在相机上开启 Wi-Fi，应用会自动识别并连接；或在右上角设置里配对「蓝牙唤醒相机」。"
             loading -> "正在读取相机里的照片…"
             !s.fresh.hasHistory -> "第一次使用，先挑出要的几张吧。"
             freshCount > 0 -> "上次取片之后拍的。"

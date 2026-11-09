@@ -8,7 +8,7 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * The 4-step handshake of Nikon's smart-device Bluetooth mode, written down from the reverse engineering in
  * nsg (hurui200320, AGPL-3.0), nikongeotag (rjmendez, GPL-3.0) and furble (gkoh, MIT), and checked against a
- * capture of the official app talking to a Zf. Experiment only.
+ * capture of the official app talking to a Zf.
  *
  * Every message is 17 bytes: a stage number, an 8-byte timestamp and 8 more bytes. In stage 1 those are the
  * controller's identity, in stage 2 and 3 a Blowfish based proof.
