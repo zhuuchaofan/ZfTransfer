@@ -6,10 +6,11 @@
 
 这个项目来自一个很具体的需求：拍完照片后，在手机上清楚地选片、预览，再把需要的原图导入相册，作为 SnapBridge 之外的一个选择。
 
-**[下载 Android 安装包（0.6.0）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.6.0/ZfTransfer-0.6.0.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.6.0)
+**[下载 Android 安装包（0.7.0）](https://github.com/zhuuchaofan/ZfTransfer/releases/download/v0.7.0/ZfTransfer-0.7.0.apk)** · [版本说明与校验文件](https://github.com/zhuuchaofan/ZfTransfer/releases/tag/v0.7.0)
 
 ## 可以做什么
 
+- 蓝牙唤醒：配对一次后，点“连接相机”即可通过蓝牙打开相机 Wi-Fi 并自动连接，不用每次进相机菜单。
 - 三列照片浏览，向后滚动自动加载更多；长按滑动选择多张。
 - 默认加载清晰预览，支持双击、双指缩放，按需查看原图。
 - 单张或批量导入 JPEG 和 RAW（NEF/NRW/DNG）原图到手机相册，显示下载进度。RAW 预览使用相机内嵌的预览图。
