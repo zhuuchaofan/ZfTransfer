@@ -66,7 +66,7 @@ class ConnectionRuntime(private val context: android.content.Context) {
     private var issue: Pair<UserIssue, Boolean>? = null
     private val listeners = linkedSetOf<() -> Unit>()
     val cameraWifi = CameraWifi(context, ::maybeAutoConnect, ::wifiLost, ::report) { issue, interactive ->
-        if (!connectionReady) presentIssue(issue, interactive)
+        if (!connectionReady) presentIssue(if (bleStore.isPaired && issue == UserIssues.wifiUnavailable()) UserIssues.wakeWifiUnavailable() else issue, interactive)
         else log("Ignoring obsolete Wi-Fi request failure; verified camera session is connected")
     }
     private fun now() = android.os.SystemClock.elapsedRealtime()
@@ -103,7 +103,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
     fun stop() {
         userStopped = true; pendingConnect.cancel(); preparation.reset(); lifetime.stop(); autoGate.stop(sessionNetwork?.networkHandle)
         session.disconnect(); cameraWifi.close(); revision++
-        report("已断开连接。相机会随之自动关闭 Wi-Fi，下次连接前请先在相机上重新开启。成功导入的照片仍保留，未完成任务可稍后重试。")
+        report(if (bleStore.isPaired) "已断开连接。下次点「连接相机」会通过蓝牙重新唤醒相机 Wi-Fi。已取回的照片仍保留，未完成的可稍后继续。"
+            else "已断开连接。相机会随之关闭 Wi-Fi，下次连接前请先在相机上重新开启。已取回的照片仍保留，未完成的可稍后继续。")
         changed()
     }
     init {
@@ -137,7 +138,9 @@ class ConnectionRuntime(private val context: android.content.Context) {
                 connectCamera(endpoint.network, automatic = true)
 
             }
-        } else if (wifiRetry.due(now()) && !cameraWifi.hasActiveRequest) {
+        } else if (!bleStore.isPaired && wifiRetry.due(now()) && !cameraWifi.hasActiveRequest) {
+            // With Bluetooth wake paired, the hotspot is off until "连接相机" wakes it: a background request for the
+            // saved hotspot would only hold the button for its 45-second timeout and then report a stale failure.
             val saved = wifiStore.load()
             if (saved != null && context.checkSelfPermission(wifiPermission()) == PackageManager.PERMISSION_GRANTED) {
                 profileAttempted = true; requestWifi(saved, true)
@@ -150,7 +153,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
         if (pendingConnect.network == network) { pendingConnect.cancel(); preparation.resetNetwork() }
         if (sessionNetwork == network) {
             session.disconnect()
-            report("相机 Wi-Fi 已断开（相机断开连接后会自动关闭 Wi-Fi）。请在相机上重新开启 Wi-Fi，应用会自动识别；已导入照片仍保留。")
+            report(if (bleStore.isPaired) "相机 Wi-Fi 已断开。点「连接相机」可通过蓝牙重新唤醒；已取回的照片仍保留。"
+                else "相机 Wi-Fi 已断开。请在相机上重新开启 Wi-Fi，应用会自动识别；已取回的照片仍保留。")
             revision++; changed()
         }
     }
@@ -256,36 +260,48 @@ class ConnectionRuntime(private val context: android.content.Context) {
                     profileAttempted = true
                     requestWifi(WifiProfile(ssid, latestProfile.password), automatic)
                 } else if (latestProfile == null) {
-                    report("已开启相机热点 $ssid，请输入一次 Wi-Fi 密码。")
+                    report("相机 Wi-Fi 已开启（$ssid），请输入一次 Wi-Fi 密码。")
                     pendingWakeSsid = ssid
                     changed()
                 } else {
-                    presentIssue(UserIssue("未获得 Wi-Fi 连接权限", "请在应用权限中开启附近设备或位置权限，或在系统 Wi-Fi 设置中手动连接 $ssid。", Recovery.APP_SETTINGS), !automatic)
+                    presentIssue(UserIssue("需要附近设备权限", "加入相机 Wi-Fi 需要「附近设备」权限。也可以在手机 Wi-Fi 设置里手动连接 $ssid。", Recovery.APP_SETTINGS), !automatic)
                 }
             }
         }) {
-            val existing = bluetooth.scanForWokenHotspot(savedNames, timeoutSeconds = 2)
+            val stopped = { userStopped }
+            report("正在查找相机…")
+            val existing = bluetooth.scanForWokenHotspot(savedNames, timeoutSeconds = 2, cancelled = stopped)
+            if (userStopped) return@task
             if (existing != null) {
                 log("Camera hotspot already on nearby: $existing; skipping BLE wake")
                 readySsid = existing
                 return@task
             }
-            when (val outcome = bluetooth.wakeHotspot(::report)) {
+            when (val outcome = bluetooth.wakeHotspot(::report, stopped)) {
+                BleWakeOutcome.Cancelled -> return@task
                 is BleWakeOutcome.Failed -> {
                     wakeIssue = outcome.issue
                     return@task
                 }
                 BleWakeOutcome.Woken -> {
-                    report("已发出蓝牙唤醒命令，正在搜索相机 Wi-Fi 热点…")
-                    val refreshedNames = setOfNotNull(profile?.ssid, prefs.getString("last_camera_ssid", null), bleStore.cameraName)
-                    val scanned = bluetooth.scanForWokenHotspot(refreshedNames, timeoutSeconds = 15)
-                    val target = scanned ?: BleWakeRules.fallbackWakeSsid(profile?.ssid ?: prefs.getString("last_camera_ssid", null), bleStore.cameraName)
+                    // The system request finds the hotspot itself; scanning first only helps when its name is unknown
+                    // (scans are throttled, so on the phone it found nothing and cost the full 15 seconds).
+                    // Only a saved hotspot name is trusted for this; the Bluetooth name may not match the Wi-Fi one.
+                    val savedSsid = profile?.ssid ?: prefs.getString("last_camera_ssid", null)
+                    val known = savedSsid?.let { BleWakeRules.fallbackWakeSsid(it, null) }
+                    val target = known ?: run {
+                        report("相机 Wi-Fi 正在开启…")
+                        val refreshedNames = setOfNotNull(profile?.ssid, prefs.getString("last_camera_ssid", null), bleStore.cameraName)
+                        bluetooth.scanForWokenHotspot(refreshedNames, timeoutSeconds = 15, cancelled = stopped)
+                            ?: BleWakeRules.fallbackWakeSsid(null, bleStore.cameraName)
+                    }
+                    if (userStopped) return@task
                     if (target != null) {
                         readySsid = target
                     } else {
                         wakeIssue = UserIssue(
-                            "已唤醒相机但未搜到热点",
-                            "蓝牙唤醒命令已发送，但附近尚未搜到相机 Wi-Fi 热点。请在「相机 Wi-Fi 配置」中填写一次相机热点名称和密码，或直接在手机 Wi-Fi 设置中连接相机热点。",
+                            "没搜到相机 Wi-Fi",
+                            "相机已收到唤醒命令，但手机还没搜到它的 Wi-Fi。请在「更多 → 相机 Wi-Fi 配置」里填一次名称和密码，或在手机 Wi-Fi 设置里手动连接。",
                             Recovery.WIFI_SETTINGS
                         )
                     }
@@ -301,7 +317,8 @@ class ConnectionRuntime(private val context: android.content.Context) {
         val network = candidate.network
         val address = candidate.address
         sessionNetwork = network
-        val candidateSsid = locator.ssidOf(candidate.caps)
+        // Android reports "<unknown ssid>" rather than null when it hides the name; fall back to the requested hotspot.
+        val candidateSsid = locator.ssidOf(candidate.caps)?.takeUnless { it.isBlank() || it.trim('"') == "<unknown ssid>" }
             ?: if (cameraWifi.requestedNetwork == network) cameraWifi.requestedSsid else null
         val ptpName = BleWakeRules.ptpClientNameFor(candidateSsid ?: cameraWifi.requestedSsid)
         log("Using physical Wi-Fi network=${network.networkHandle}; endpoint=$address; ssid=${candidateSsid ?: "unknown"}; ptpName=$ptpName; mode=${if (cameraWifi.requestedNetwork == network) "app-request" else "system-wifi"}")
@@ -466,11 +483,14 @@ class ConnectionRuntime(private val context: android.content.Context) {
     }
     private val thumbnailFeeder by lazy {
         ThumbnailFeeder(session, thumbs, ::thumbnailFile, { gallery.imageSession }, { fetched ->
-            if (fetched.isNotEmpty()) ui { fetched.forEach { (handle, bitmap) -> thumbs.put(handle, bitmap) }; revision++; changed() }
+            // Thumbnails change no catalog state: a revision bump here re-planned the whole grid for every batch.
+            if (fetched.isNotEmpty()) ui { fetched.forEach { (handle, bitmap) -> thumbs.put(handle, bitmap) }; thumbnailsChanged() }
         }, ::log)
     }
     /** Handles near the viewport are read first. */
     fun focusThumbnails(handles: List<Long>) { thumbnailFeeder.focus = handles }
+    /** Set by the visible screen; called on the main thread when camera thumbnails land in [thumbs]. */
+    var thumbnailsChanged: () -> Unit = {}
     private val mediumFetcher by lazy {
         // Older builds cached previews without turning them upright; those are dropped rather than shown sideways.
         java.io.File(cacheDir, "medium_previews").deleteRecursively()

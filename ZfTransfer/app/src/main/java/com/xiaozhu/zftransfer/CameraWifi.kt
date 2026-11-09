@@ -67,7 +67,7 @@ class CameraWifi(context: Context, private val changed: () -> Unit,
             val specifier = WifiNetworkSpecifier.Builder().setSsid(profile.ssid).setWpa2Passphrase(profile.password).build()
             cm.requestNetwork(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).setNetworkSpecifier(specifier).build(), callback, 45000)
-            status("等待系统确认连接相机 Wi-Fi…")
+            status("正在加入相机 Wi-Fi，可能需要半分钟。如有系统弹窗，请点「连接」。")
         } catch (e: Exception) {
             releaseRequest()
             // No exception details: OEM messages may contain credentials.

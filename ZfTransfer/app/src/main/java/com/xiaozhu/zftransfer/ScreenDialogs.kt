@@ -72,7 +72,7 @@ class ScreenDialogs(
     fun showSettings() {
         val sheet = newSheet("相机与应用")
         val blePaired = runtime.bleStore.isPaired
-        val bleSuffix = if (blePaired) " · 已配对" + (runtime.bleStore.cameraName?.let { " ($it)" } ?: "") else " · 未配对"
+        val bleSuffix = if (blePaired) " · " + (runtime.bleStore.cameraName ?: "已配对") else " · 未配对"
         sheet.row("蓝牙唤醒相机$bleSuffix") { showBleWake() }
         sheet.row("相机 Wi-Fi 配置") { showWifiProfile() }
         sheet.body.addView(switch("自动连接", prefs.getBoolean("auto_connect", true)) { checked ->
@@ -106,7 +106,7 @@ class ScreenDialogs(
     fun showWifiProfile(prefillSsid: String? = null) {
         val saved = wifiStore.load()
         val sheet = newSheet("连接相机 Wi-Fi")
-        sheet.message(if (prefillSsid != null) "已通过蓝牙唤醒相机热点，请输入一次 Wi-Fi 密码（保存后下次自动填入）。" else "填写相机屏幕上的名称和密码，首次连接需在系统弹窗中确认。")
+        sheet.message(if (prefillSsid != null) "相机 Wi-Fi 已通过蓝牙开启。密码和在相机上手动开启 Wi-Fi 时显示的相同，保存后以后不用再输。" else "填写相机屏幕上的名称和密码，首次连接需在系统弹窗中确认。")
         sheet.body.addView(AppUi.text(activity, "Wi-Fi 名称"))
         val ssid = AppUi.input(activity, "相机 Wi-Fi 名称").apply { setText(prefillSsid ?: saved?.ssid.orEmpty()) }
         sheet.body.addView(ssid, LinearLayout.LayoutParams(-1, dp(50)))
@@ -140,25 +140,26 @@ class ScreenDialogs(
         val store = runtime.bleStore
         val sheet = newSheet("蓝牙唤醒相机")
         if (store.isPaired) {
-            val name = store.cameraName ?: "尼康相机"
             sheet.message(
-                "已配对：$name\n\n" +
-                    "点击「连接相机」时，若附近没有开启的相机热点，应用会通过蓝牙自动唤醒相机 Wi-Fi（名称带 _SnapBridge），随后自动加入并读取照片。\n\n" +
-                    "注意：相机与官方 SnapBridge 共用同一套蓝牙配对，若在 SnapBridge 里重新配对过，需要在本应用重新配对。"
+                "已配对 ${store.cameraName ?: "尼康相机"}。\n\n" +
+                    "点「连接相机」时，应用会通过蓝牙打开相机 Wi-Fi 并自动连接，不用在相机上操作。\n\n" +
+                    "如果之后在 SnapBridge 里重新配对过这台相机，需要在这里重新配对。"
             )
             sheet.action("重新配对") { startBlePairingFlow() }
             sheet.action("解除配对") {
                 store.unpair()
-                runtime.report("已解除蓝牙唤醒配对。如需彻底移除系统蓝牙绑定，可在手机蓝牙设置中忘记相机。")
+                runtime.report("已解除蓝牙唤醒。")
+                showIssuePanel(UserIssue("已解除蓝牙唤醒",
+                    "之后连接前需要先在相机上开启 Wi-Fi。手机蓝牙列表里还留有这台相机，如需重新配对，请先在蓝牙设置里忽略它。",
+                    Recovery.BLUETOOTH_SETTINGS))
             }
             sheet.action("关闭")
         } else {
             sheet.message(
-                "配对后，无需每次在相机菜单里手动打开 Wi-Fi：点「连接相机」即可通过蓝牙唤醒相机热点并连接。\n\n" +
-                    "配对步骤：\n" +
-                    "1. 若手机之前用 SnapBridge 配对过这台相机，请先在手机「蓝牙设置」里忘记 / 取消配对该相机，并退出后台的 SnapBridge；\n" +
-                    "2. 在相机上打开「网络菜单 → 连接至智能设备 → 配对（Bluetooth）」，停留在等待配对界面；\n" +
-                    "3. 点击下方「开始配对」，随后在手机和相机弹出的确认框中都点确认。"
+                "配对一次，以后点「连接相机」就能用蓝牙打开相机 Wi-Fi，不用每次进相机菜单。\n\n" +
+                    "1. 手机用 SnapBridge 配对过这台相机的话，先在手机蓝牙设置里忽略它，并强行停止 SnapBridge。\n" +
+                    "2. 在相机上进入「网络 → 连接至智能设备 → 配对（Bluetooth）」，停在等待画面。\n" +
+                    "3. 点「开始配对」，按提示在手机和相机上确认。"
             )
             sheet.action("开始配对", true) { startBlePairingFlow() }
             sheet.action("打开手机蓝牙设置") { openSettings(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
@@ -182,40 +183,44 @@ class ScreenDialogs(
     }
 
     private fun showExistingBondSheet(bondedName: String) {
-        newSheet("请先忘记旧蓝牙绑定").apply {
-            message("手机系统蓝牙里已有相机绑定「$bondedName」（通常是之前配对留下的）。相机的蓝牙绑定需要先在手机「蓝牙设置」里忘记 / 取消配对，再回到应用开始配对。")
+        newSheet("先忽略旧的蓝牙记录").apply {
+            message("手机蓝牙列表里已有「$bondedName」，通常是之前配对留下的。请在蓝牙设置里点它旁边的设置图标，选「忽略此设备 / 取消配对」，再回来继续。")
             action("打开蓝牙设置", true) { openSettings(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
-            action("已忘记，继续配对") { runBlePairingDialog() }
+            action("已忽略，继续配对") { startBlePairingFlow() }
             action("取消")
             show()
         }
     }
 
     private fun runBlePairingDialog() {
-        val sheet = newSheet("正在配对相机蓝牙")
-        val status = sheet.message("请确认相机已进入「配对（Bluetooth）」界面…")
-        val closeBtn = sheet.action("取消")
+        val sheet = newSheet("正在配对")
+        val status = sheet.message("请让相机停在「配对（Bluetooth）」等待画面…")
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        sheet.action("取消") { cancelled.set(true) }
         sheet.setCancelable(false)
         sheet.show()
         Thread {
-            val outcome = runtime.bluetooth.pair { msg ->
+            val outcome = runtime.bluetooth.pair({ msg ->
                 activity.runOnUiThread { if (alive() && sheet.isShowing) status.text = msg }
-            }
+            }, cancelled::get)
             activity.runOnUiThread {
                 if (!alive()) return@runOnUiThread
                 if (sheet.isShowing) sheet.dismiss()
+                // A cancelled pairing ends quietly; one that still finished is kept and shown in the settings row.
+                if (cancelled.get() && outcome !is BlePairOutcome.Paired) return@runOnUiThread
                 when (outcome) {
                     is BlePairOutcome.Paired -> {
-                        runtime.report("蓝牙配对成功：${outcome.cameraName}")
-                        showNotice("蓝牙配对已完成", "已与 ${outcome.cameraName} 完成蓝牙配对。下次点击「连接相机」时，应用会自动通过蓝牙唤醒相机 Wi-Fi 热点。")
+                        runtime.report("已配对 ${outcome.cameraName}，可以用蓝牙唤醒相机 Wi-Fi。")
+                        showNotice("配对完成", "以后点「连接相机」，应用会通过蓝牙打开 ${outcome.cameraName} 的 Wi-Fi 并自动连接。" +
+                            if (wifiStore.load() == null) "第一次连接时需要输入一次相机 Wi-Fi 密码。" else "")
                     }
                     is BlePairOutcome.ExistingBond -> showExistingBondSheet(outcome.bondedName)
-                    is BlePairOutcome.Failed -> showIssuePanel(UserIssue(outcome.title, outcome.message, Recovery.NONE))
+                    is BlePairOutcome.Failed -> showIssuePanel(UserIssue(outcome.title, outcome.message, outcome.recovery))
+                    BlePairOutcome.Cancelled -> Unit
                 }
             }
         }.start()
     }
-
     /** Confirms what needs confirming (a pending batch, duplicates), then starts the import. */
     fun confirmImport(items: List<CameraObject>, start: (List<CameraObject>, Boolean) -> Unit) {
         if (runtime.busy.get() || runtime.client == null || items.isEmpty()) return
@@ -250,6 +255,7 @@ class ScreenDialogs(
         sheet.message(issue.message)
         val primary = primaryLabel ?: when (issue.recovery) {
             Recovery.WIFI_SETTINGS -> "检查 Wi-Fi"
+            Recovery.BLUETOOTH_SETTINGS -> "打开蓝牙设置"
             Recovery.APP_SETTINGS -> "查看应用权限"
             Recovery.STORAGE_SETTINGS -> "查看手机存储"
             Recovery.NONE -> "知道了"
@@ -257,6 +263,7 @@ class ScreenDialogs(
         sheet.action(primary, true) {
             when (issue.recovery) {
                 Recovery.WIFI_SETTINGS -> openSettings(Intent(Settings.ACTION_WIFI_SETTINGS))
+                Recovery.BLUETOOTH_SETTINGS -> openSettings(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
                 Recovery.APP_SETTINGS -> openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}")))
                 Recovery.STORAGE_SETTINGS -> openSettings(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS))
                 Recovery.NONE -> Unit

@@ -5,12 +5,15 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 
 enum class UserOperation { CONNECT, READ_PHOTOS, IMPORT, PREVIEW, WIFI }
-enum class Recovery { WIFI_SETTINGS, APP_SETTINGS, STORAGE_SETTINGS, NONE }
+enum class Recovery { WIFI_SETTINGS, BLUETOOTH_SETTINGS, APP_SETTINGS, STORAGE_SETTINGS, NONE }
 data class UserIssue(val title: String, val message: String, val recovery: Recovery)
 
 /** Raw provider/socket messages belong in diagnostics, never in user-facing copy. */
 object UserIssues {
     fun wifiUnavailable() = UserIssue("未能连接相机 Wi-Fi", "请先确认相机的 Wi-Fi 已开启：相机在断开连接后会自动关闭热点，需要在相机上重新开启。再检查名称和密码是否正确，并允许系统连接请求。也可以手动连接相机 Wi-Fi 后返回应用。", Recovery.WIFI_SETTINGS)
+
+    /** The same failure after a Bluetooth wake: the hotspot was opened for us, so the password is the usual suspect. */
+    fun wakeWifiUnavailable() = UserIssue("没能加入相机 Wi-Fi", "相机 Wi-Fi 已通过蓝牙开启，但手机没能加入。请检查「更多 → 相机 Wi-Fi 配置」里的密码，并在系统弹窗中允许连接，然后再点「连接相机」。", Recovery.WIFI_SETTINGS)
 
     fun from(error: Throwable, operation: UserOperation): UserIssue {
         val chain = generateSequence(error) { it.cause }.take(8).toList()

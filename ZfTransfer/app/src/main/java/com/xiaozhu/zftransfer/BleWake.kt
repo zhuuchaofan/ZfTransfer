@@ -153,13 +153,26 @@ class BleWakeStore(private val prefs: SharedPreferences) {
 
 sealed class BleWakeOutcome {
     data object Woken : BleWakeOutcome()
+    data object Cancelled : BleWakeOutcome()
     data class Failed(val issue: UserIssue) : BleWakeOutcome()
 }
 
 sealed class BlePairOutcome {
     data class Paired(val cameraName: String) : BlePairOutcome()
     data class ExistingBond(val bondedName: String) : BlePairOutcome()
-    data class Failed(val title: String, val message: String) : BlePairOutcome()
+    data object Cancelled : BlePairOutcome()
+    data class Failed(val title: String, val message: String, val recovery: Recovery = Recovery.NONE) : BlePairOutcome()
+}
+
+/** Polls [queue] in short slices so a long Bluetooth wait stops soon after [cancelled] turns true. */
+private fun <T> LinkedBlockingQueue<T>.pollUnless(seconds: Long, cancelled: () -> Boolean): T? {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
+    while (!cancelled()) {
+        val left = deadline - System.nanoTime()
+        if (left <= 0) return null
+        poll(minOf(left, TimeUnit.MILLISECONDS.toNanos(300)), TimeUnit.NANOSECONDS)?.let { return it }
+    }
+    return null
 }
 
 /**
@@ -202,13 +215,13 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
      * 3) Performs the 4-step GATT handshake + controller name write + device info reads.
      * 4) Initiates classic Bluetooth bonding (`createBond`) against the classic address and waits for confirmation.
      */
-    fun pair(status: (String) -> Unit): BlePairOutcome {
+    fun pair(status: (String) -> Unit, cancelled: () -> Boolean = { false }): BlePairOutcome {
         if (!hasPermissions(context)) {
-            return BlePairOutcome.Failed("需要蓝牙权限", "请允许应用的「附近设备 / 蓝牙」权限后再配对相机。")
+            return BlePairOutcome.Failed("需要附近设备权限", "请在应用权限里允许「附近设备」，再开始配对。", Recovery.APP_SETTINGS)
         }
         val adapter = adapter()
         if (adapter == null || !adapter.isEnabled) {
-            return BlePairOutcome.Failed("蓝牙未开启", "请先在手机上打开蓝牙，再开始配对。")
+            return BlePairOutcome.Failed("手机蓝牙未打开", "请先打开手机蓝牙，再开始配对。", Recovery.BLUETOOTH_SETTINGS)
         }
         findExistingNikonBond()?.let { bonded ->
             val label = bonded.name ?: bonded.address
@@ -218,37 +231,42 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
 
         val identityHex = store.getOrCreateIdentityHex()
         val identity = BleWakeRules.parseIdentityHex(identityHex)!!
-        status("正在搜索配对中的相机（请在相机上打开「连接至智能设备 → 配对（Bluetooth）」）…")
+        status("正在搜索相机…\n请让相机停在「配对（Bluetooth）」等待画面。")
 
-        val found = discoverPairingCamera(adapter, status)
-            ?: return BlePairOutcome.Failed(
-                "未搜到配对中的相机",
-                "请确认相机已进入「网络菜单 → 连接至智能设备 → 配对（Bluetooth）」并停留在等待配对画面，且手机离相机较近；若手机后台开着 SnapBridge，请先退出或强行停止后再试。"
-            )
+        val found = discoverPairingCamera(adapter, status, cancelled)
+        if (cancelled()) return BlePairOutcome.Cancelled
+        if (found == null) return BlePairOutcome.Failed(
+            "没有找到等待配对的相机",
+            "请让相机停在「网络 → 连接至智能设备 → 配对（Bluetooth）」的等待画面，手机靠近相机后重试。手机后台开着 SnapBridge 时，先把它强行停止。"
+        )
 
         val leDevice = found.first
         val classicAddress = found.second ?: store.classicAddress
         log("BlePair: connecting GATT to ${leDevice.address.takeLast(5)}, classic=${classicAddress?.takeLast(5) ?: "same"}")
-        status("已找到相机，正在进行蓝牙握手…")
+        status("已找到相机，正在建立蓝牙连接…")
 
         val cameraName = try {
             GattSession(context, identity, CONTROLLER_NAME, wake = false, pairing = true, device = leDevice, log = log).run()
                 .ifBlank { leDevice.name ?: "Nikon 相机" }
         } catch (e: Exception) {
             log("BlePair GATT failed: ${e.javaClass.simpleName}: ${e.message}")
+            if (cancelled()) return BlePairOutcome.Cancelled
             return BlePairOutcome.Failed(
-                "蓝牙握手未完成",
-                "与相机的蓝牙握手中断（${e.message ?: e.javaClass.simpleName}）。请确认相机仍在「配对（Bluetooth）」界面，然后重试。"
+                "蓝牙连接中断",
+                "相机没有完成蓝牙握手。请确认相机还停在「配对（Bluetooth）」画面，然后重试。"
             )
         }
+        if (cancelled()) return BlePairOutcome.Cancelled
 
         val bondTarget = classicAddress?.let { runCatching { adapter.getRemoteDevice(it) }.getOrNull() } ?: leDevice
-        status("请在手机和相机弹出的配对确认框中都点「配对 / 确定」…")
-        val bondedOk = performClassicBond(bondTarget)
+        status("请在手机和相机上都确认配对\n手机点「配对」，相机按 OK。")
+        val bondedOk = performClassicBond(bondTarget, cancelled)
+        if (cancelled()) return BlePairOutcome.Cancelled
         if (!bondedOk) {
             return BlePairOutcome.Failed(
-                "蓝牙绑定未完成",
-                "手机与相机的蓝牙绑定没有通过。若手机蓝牙设置里留有相机之前的旧配对（例如官方 SnapBridge 留下的），请先在系统蓝牙设置里「忘记 / 取消配对」该相机，再重新配对。"
+                "配对没有完成",
+                "手机或相机上的配对确认没有通过。如果手机蓝牙列表里还有这台相机的旧记录，先在蓝牙设置里忽略它，再重新配对。",
+                Recovery.BLUETOOTH_SETTINGS
             )
         }
 
@@ -261,7 +279,7 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
      * Searches for a camera in pairing mode using both LE scanning (for the GATT endpoint) and classic Bluetooth
      * discovery (to learn the camera's real BR/EDR MAC address, since in pairing mode LE uses a temporary address).
      */
-    private fun discoverPairingCamera(adapter: BluetoothAdapter, status: (String) -> Unit): Pair<BluetoothDevice, String?>? {
+    private fun discoverPairingCamera(adapter: BluetoothAdapter, status: (String) -> Unit, cancelled: () -> Boolean): Pair<BluetoothDevice, String?>? {
         val leFound = LinkedBlockingQueue<BluetoothDevice>()
         val classicFound = LinkedBlockingQueue<String>()
 
@@ -302,11 +320,11 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
                 adapter.startDiscovery()
             }
             scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCallback)
-            val leDevice = leFound.poll(35, TimeUnit.SECONDS) ?: return null
+            val leDevice = leFound.pollUnless(35, cancelled) ?: return null
             var classicAddr = classicFound.poll()
             if (classicAddr == null) {
-                status("已发现相机，正在确认相机经典蓝牙地址…")
-                classicAddr = classicFound.poll(6, TimeUnit.SECONDS)
+                status("已发现相机，正在读取相机信息…")
+                classicAddr = classicFound.pollUnless(6, cancelled)
             }
             return leDevice to classicAddr
         } finally {
@@ -316,7 +334,7 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
         }
     }
 
-    private fun performClassicBond(target: BluetoothDevice): Boolean {
+    private fun performClassicBond(target: BluetoothDevice, cancelled: () -> Boolean): Boolean {
         if (target.bondState == BluetoothDevice.BOND_BONDED) {
             log("BlePair: already bonded with …${target.address.takeLast(5)}")
             return true
@@ -342,7 +360,7 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
             val started = target.createBond()
             log("BlePair createBond(…${target.address.takeLast(5)}) -> $started")
             if (!started) return target.bondState == BluetoothDevice.BOND_BONDED
-            val finalState = outcomes.poll(60, TimeUnit.SECONDS)
+            val finalState = outcomes.pollUnless(60, cancelled)
             finalState == BluetoothDevice.BOND_BONDED
         } finally {
             runCatching { context.unregisterReceiver(receiver) }
@@ -354,34 +372,34 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
      * scans for the camera's advertisement carrying the first 4 bytes of our identity, runs the 4-step handshake,
      * reads 0x2004, and writes 0x01 to 0x2005.
      */
-    fun wakeHotspot(status: (String) -> Unit): BleWakeOutcome {
+    fun wakeHotspot(status: (String) -> Unit, cancelled: () -> Boolean = { false }): BleWakeOutcome {
         val identity = store.identityBytes
-            ?: return BleWakeOutcome.Failed(UserIssue("尚未蓝牙配对相机", "请先在设置里完成「蓝牙唤醒相机」配对，或在相机上手动开启 Wi-Fi。", Recovery.WIFI_SETTINGS))
+            ?: return BleWakeOutcome.Failed(UserIssue("还没有配对蓝牙", "请先在「更多 → 蓝牙唤醒相机」里配对，或在相机上手动开启 Wi-Fi。", Recovery.NONE))
         if (!hasPermissions(context)) {
-            return BleWakeOutcome.Failed(UserIssue("需要蓝牙权限才能唤醒相机", "请在应用权限中允许「附近设备 / 蓝牙」，也可以直接在相机上手动开启 Wi-Fi 热点。", Recovery.APP_SETTINGS))
+            return BleWakeOutcome.Failed(UserIssue("需要附近设备权限", "蓝牙唤醒相机需要「附近设备」权限。也可以在相机上手动开启 Wi-Fi。", Recovery.APP_SETTINGS))
         }
         val adapter = adapter()
         if (adapter == null || !adapter.isEnabled) {
-            return BleWakeOutcome.Failed(UserIssue("手机蓝牙未开启", "请打开手机蓝牙以自动唤醒相机热点，或直接在相机上手动开启 Wi-Fi 热点。", Recovery.WIFI_SETTINGS))
+            return BleWakeOutcome.Failed(UserIssue("手机蓝牙未打开", "打开蓝牙后再点「连接相机」，应用会自动唤醒相机 Wi-Fi。也可以在相机上手动开启 Wi-Fi。", Recovery.BLUETOOTH_SETTINGS))
         }
 
         status("正在通过蓝牙寻找相机…")
-        val camera = findPairedCameraAdvertising(adapter, identity)
-            ?: return BleWakeOutcome.Failed(
-                UserIssue(
-                    "蓝牙未找到相机",
-                    "没收到相机的蓝牙广播。可能原因：\n" +
-                        "1. 相机电源未开、处于半按快门休眠，或「连接至智能设备」的蓝牙已关闭；\n" +
-                        "2. 官方 SnapBridge 正在后台占用蓝牙连接（可先强行停止 SnapBridge）；\n" +
-                        "3. 相机仍停留在上一次 Wi-Fi 等待连接界面（请按相机 MENU 退出等待界面）。\n" +
-                        "你也可以直接在相机上手动开启 Wi-Fi 热点。",
-                    Recovery.WIFI_SETTINGS
-                )
+        val camera = findPairedCameraAdvertising(adapter, identity, cancelled)
+        if (cancelled()) return BleWakeOutcome.Cancelled
+        if (camera == null) return BleWakeOutcome.Failed(
+            UserIssue(
+                "蓝牙没找到相机",
+                "请确认相机已开机、没有进入休眠（半按快门可唤醒），并靠近手机。\n" +
+                    "手机后台开着 SnapBridge 时，它会占用相机蓝牙，先把它强行停止。\n" +
+                    "也可以在相机上手动开启 Wi-Fi。",
+                Recovery.WIFI_SETTINGS
             )
+        )
 
-        status("已找到相机，正在通过蓝牙开启相机 Wi-Fi…")
+        status("已找到相机，正在开启相机 Wi-Fi…")
         return try {
-            val name = GattSession(context, identity, "Android_ZfTransfer", wake = true, pairing = false, device = camera, log = log).run()
+            val name = GattSession(context, identity, "Android_ZfTransfer", wake = true, pairing = false, device = camera, log = log, cancelled = cancelled).run()
+            if (cancelled()) return BleWakeOutcome.Cancelled
             if (name.isNotBlank() && store.cameraName.isNullOrBlank()) {
                 store.markPaired(name, null)
             }
@@ -390,12 +408,9 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
             log("BleWake disconnected (status=${e.status}): ${e.message}")
             BleWakeOutcome.Failed(
                 UserIssue(
-                    "相机拒绝或断开了蓝牙唤醒",
-                    "相机在蓝牙连接后立即断开。常见原因：\n" +
-                        "1. 相机正停留在「等待 Wi-Fi 连接」画面（请先在相机上退出等待界面）；\n" +
-                        "2. 官方 SnapBridge 正在后台争抢连接；\n" +
-                        "3. 相机里的蓝牙配对已被覆盖（可在设置里重新配对）。\n" +
-                        "你也可以直接在相机上手动开启 Wi-Fi 热点。",
+                    "相机断开了蓝牙",
+                    "相机停在 Wi-Fi 等待画面时会拒绝唤醒，请在相机上按 MENU 退出后重试。\n" +
+                        "如果在 SnapBridge 里重新配对过，相机会忘记本应用，需要在「更多 → 蓝牙唤醒相机」里重新配对。",
                     Recovery.WIFI_SETTINGS
                 )
             )
@@ -403,15 +418,15 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
             log("BleWake failed: ${e.javaClass.simpleName}: ${e.message}")
             BleWakeOutcome.Failed(
                 UserIssue(
-                    "蓝牙唤醒相机失败",
-                    "未能通过蓝牙开启相机热点（${e.message ?: "连接中断"}）。请确认 SnapBridge 未在后台占用蓝牙、相机未停在等待连接界面，或直接在相机上手动开启 Wi-Fi 热点。",
+                    "没能唤醒相机 Wi-Fi",
+                    "蓝牙连接中途断开。请确认 SnapBridge 没在后台运行、相机没停在等待画面，然后重试；也可以在相机上手动开启 Wi-Fi。",
                     Recovery.WIFI_SETTINGS
                 )
             )
         }
     }
 
-    private fun findPairedCameraAdvertising(adapter: BluetoothAdapter, identity: ByteArray): BluetoothDevice? {
+    private fun findPairedCameraAdvertising(adapter: BluetoothAdapter, identity: ByteArray, cancelled: () -> Boolean): BluetoothDevice? {
         val scanner = adapter.bluetoothLeScanner ?: return null
         val found = LinkedBlockingQueue<BluetoothDevice>()
         val callback = object : ScanCallback() {
@@ -428,7 +443,7 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
         }
         scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
         return try {
-            found.poll(12, TimeUnit.SECONDS)
+            found.pollUnless(12, cancelled)
         } finally {
             runCatching { scanner.stopScan(callback) }
         }
@@ -437,10 +452,10 @@ class CameraBluetooth(private val context: Context, private val store: BleWakeSt
     /**
      * Scans nearby Wi-Fi networks for up to [timeoutSeconds] to find the hotspot opened by the wake command.
      */
-    fun scanForWokenHotspot(savedCameraNames: Set<String>, timeoutSeconds: Int = 12): String? {
+    fun scanForWokenHotspot(savedCameraNames: Set<String>, timeoutSeconds: Int = 12, cancelled: () -> Boolean = { false }): String? {
         val wm = context.applicationContext.getSystemService(WifiManager::class.java) ?: return null
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds.toLong())
-        while (System.nanoTime() < deadline) {
+        while (System.nanoTime() < deadline && !cancelled()) {
             runCatching { @Suppress("DEPRECATION") wm.startScan() }
             val results = runCatching {
                 wm.scanResults.orEmpty().mapNotNull { r ->
@@ -471,6 +486,8 @@ private class GattSession(
     private val pairing: Boolean,
     private val device: BluetoothDevice,
     private val log: (String) -> Unit,
+    /** Checked before the wake command, so a connection the user stopped mid-handshake does not open the hotspot. */
+    private val cancelled: () -> Boolean = { false },
 ) {
     private fun uuid(short: String) = UUID.fromString("0000$short-3dd4-4255-8d62-6dc7b9bd5561")
     private val service = uuid("de00")
@@ -611,6 +628,7 @@ private class GattSession(
             val blob = read("2004")
             log("BleGatt read 0x2004 (${blob.size} bytes) at ${elapsedMs()}")
             if (wake) {
+                if (cancelled()) { log("BleGatt wake skipped: stopped by user"); return cameraName }
                 write("2005", byteArrayOf(1))
                 log("BleGatt wake command (0x2005=0x01) sent at ${elapsedMs()}")
                 Thread.sleep(1500)

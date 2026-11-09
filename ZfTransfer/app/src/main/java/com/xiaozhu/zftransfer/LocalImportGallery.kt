@@ -131,10 +131,20 @@ class LocalImportGallery(private val activity: Activity, private val changed: ()
             main.post {
                 pending.remove(photo.uri)
                 if (closed) { bitmap?.recycle(); return@post }
-                if (bitmap != null) { thumbs.put(photo.uri, bitmap); adapter.notifyDataSetChanged(); refreshStrip(); changed() } else failed.add(photo.uri)
+                if (bitmap != null) { thumbs.put(photo.uri, bitmap); scheduleThumbnailRefresh() } else failed.add(photo.uri)
             }
         } }
         return null
+    }
+    private var refreshPosted = false
+    /** Decodes finish in bursts while scrolling; one rebind per moment instead of one per thumbnail. */
+    private fun scheduleThumbnailRefresh() {
+        if (refreshPosted) return
+        refreshPosted = true
+        main.postDelayed({
+            refreshPosted = false
+            if (!closed) { adapter.notifyDataSetChanged(); refreshStrip(); changed() }
+        }, 100)
     }
     /** For the home screen: the [index]th newest photo in the current list, loaded like a grid cell. */
     fun thumbnailAt(index: Int): Bitmap? = photos.getOrNull(index)?.let(::thumbnail)

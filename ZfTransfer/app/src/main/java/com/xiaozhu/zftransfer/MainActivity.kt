@@ -78,16 +78,40 @@ class MainActivity : Activity() {
             is GridCell.Header -> -1L - (cell.day.filter { it.isDigit() }.toLongOrNull() ?: 0L)
             GridCell.HeaderPad, GridCell.TailPad -> -1_000_000_000L - position
         }
+        // Photo cells are recycled; headers and pads are cheap and built fresh.
+        override fun getViewTypeCount() = 2
+        override fun getItemViewType(position: Int) = if (gridCells[position] is GridCell.Photo) 0 else 1
         override fun getView(position: Int, recycled: View?, parent: ViewGroup): View = when (val cell = gridCells[position]) {
-            is GridCell.Photo -> photoCell(visiblePhotos[cell.index])
+            is GridCell.Photo -> photoCell(visiblePhotos[cell.index], recycled)
             is GridCell.Header -> dayHeader(cell)
             GridCell.HeaderPad -> cells.pad(cells.headerHeight)
             GridCell.TailPad -> cells.pad(cells.cellHeight(screen.grid.height))
         }
     }
-    private val images: GalleryImageLoader by lazy { GalleryImageLoader(applicationContext, runtime) {
-        if (!stopped) { adapter.notifyDataSetChanged(); previewController.refresh(); renderHome() }
-    } }
+    private val images: GalleryImageLoader by lazy { GalleryImageLoader(applicationContext, runtime) { scheduleThumbnailRefresh() } }
+    private var thumbnailRefreshPosted = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    /**
+     * Thumbnails arrive one by one while the grid scrolls. They are gathered for a moment and then only swapped into
+     * the cells on screen, instead of recomputing the catalog and rebuilding every visible cell for each one.
+     */
+    private fun scheduleThumbnailRefresh() {
+        if (stopped || thumbnailRefreshPosted) return
+        thumbnailRefreshPosted = true
+        handler.postDelayed({
+            thumbnailRefreshPosted = false
+            if (stopped || !::screen.isInitialized) return@postDelayed
+            if (page == Page.SHEET) {
+                val grid = screen.grid
+                for (i in 0 until grid.childCount) {
+                    val cell = gridCells.getOrNull(grid.firstVisiblePosition + i) as? GridCell.Photo ?: continue
+                    val handle = visiblePhotos.getOrNull(cell.index)?.handle ?: continue
+                    cells.showThumbnail(grid.getChildAt(i), handle, images.thumbnail(handle))
+                }
+            }
+            previewController.refresh(); renderHome()
+        }, THUMBNAIL_REFRESH_MS)
+    }
     private val previewController: PhotoPreviewController by lazy { PhotoPreviewController(this, runtime, images,
         { it in selected }, { items -> dialogs.confirmImport(items, ::startImport) }, ::toggle, dialogs::showNotice) }
     private val cells by lazy { GalleryPhotoCell(this) }
@@ -178,7 +202,7 @@ class MainActivity : Activity() {
         }
         setContentView(root)
         showPage(Page.HOME)
-        runtime.attach(runtimeListener)
+        runtime.attach(runtimeListener); runtime.thumbnailsChanged = ::scheduleThumbnailRefresh
         runtime.watch()
         renderRuntime()
         log("ZfTransfer ${packageManager.getPackageInfo(packageName, 0).versionName}; Android ${android.os.Build.VERSION.RELEASE}")
@@ -304,7 +328,7 @@ class MainActivity : Activity() {
     /** With a camera listed, the home screen shows its newest photos; otherwise the newest ones already on the phone. */
     private fun showsCameraRoll() = photos.isNotEmpty()
     private fun recentRoll() = PhotoCatalog.inCard(photos, imported, null).take(RECENT)
-    private companion object { const val RECENT = 9 }
+    private companion object { const val RECENT = 9; const val THUMBNAIL_REFRESH_MS = 100L }
 
     private fun dp(value: Int) = AppUi.dp(this, value)
     private fun refreshCatalog() {
@@ -331,12 +355,12 @@ class MainActivity : Activity() {
         if (requestCode == 43 && page == Page.PRINTS) localGallery.reload()
         if (requestCode == 44) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) dialogs.startBlePairingFlow()
-            else presentIssue(UserIssue("未获得蓝牙权限", "蓝牙配对和唤醒相机需要「附近设备 / 蓝牙」权限。可在应用权限中开启，或直接在相机上手动开启 Wi-Fi 热点。", Recovery.APP_SETTINGS))
+            else presentIssue(UserIssue("需要附近设备权限", "配对相机蓝牙需要「附近设备」权限，可以在应用权限里开启。", Recovery.APP_SETTINGS))
             return
         }
         if (requestCode == 45) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) connectCamera()
-            else presentIssue(UserIssue("未获得蓝牙或 Wi-Fi 权限", "通过蓝牙唤醒并加入相机热点需要「附近设备」权限。可在应用权限中开启，或直接在相机上手动开启 Wi-Fi 热点。", Recovery.APP_SETTINGS))
+            else presentIssue(UserIssue("需要附近设备权限", "用蓝牙唤醒并加入相机 Wi-Fi 需要「附近设备」权限，可以在应用权限里开启；也可以在相机上手动开启 Wi-Fi。", Recovery.APP_SETTINGS))
             return
         }
         if (requestCode != 41) return
@@ -418,7 +442,7 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) cameraWifi.schedule()
     }
-    private fun photoCell(obj: CameraObject): View = cells.create(obj, images.thumbnail(obj.handle),
+    private fun photoCell(obj: CameraObject, recycled: View?): View = cells.bind(recycled, obj, images.thumbnail(obj.handle),
         obj.handle in selected, obj.handle in imported, !busy.get(), screen.grid.height) { toggle(obj) }
     private fun ui(action: () -> Unit) { runOnUiThread { if (!isDestroyed && !stopped) action() } }
     private fun log(message: String) = runtime.log(message)
@@ -502,7 +526,7 @@ class MainActivity : Activity() {
         stopped = true
         previewController.close()
         dialogs.close()
-        runtime.detach(runtimeListener)
+        runtime.detach(runtimeListener); runtime.thumbnailsChanged = {}
         images.close(); localGallery.close()
         super.onDestroy()
     }
